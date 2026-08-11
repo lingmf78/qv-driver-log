@@ -17,6 +17,7 @@
 <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -30,7 +31,6 @@ const DEFAULT_SETTINGS = {
   standardStart: '09:00',
   standardEnd: '18:00',
   breakHours: 1,
-  adminPassword: 'qvirtue2026',
   publicHolidays: [
     { date: '2026-01-01', name: "New Year's Day" },
     { date: '2026-02-01', name: 'Thaipusam' },
@@ -59,6 +59,12 @@ const DEFAULT_SETTINGS = {
 };
 
 const CURRENT_USER = 'Irham';
+// These two accounts are created once in Firebase Console → Authentication →
+// Users (see FIREBASE_AUTH_SETUP.md). Whichever email successfully signs in
+// determines the role — the database itself refuses any access at all unless
+// signed in as one of these two accounts.
+const DRIVER_EMAIL = 'irham.driver@qvdriverlog.app';
+const ADMIN_EMAIL = 'admin@qvdriverlog.app';
 
 // ---------- pure helpers ----------
 function pad(n) { return n < 10 ? '0' + n : '' + n; }
@@ -396,6 +402,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
 
 async function apiGet(key, setSync) {
   try {
@@ -424,17 +431,37 @@ async function apiSet(key, val, setSync) {
 }
 
 // ---------- login screen ----------
-function Login({ settings, onDriver, onAdmin }) {
-  const [showPw, setShowPw] = useState(false);
-  const [pw, setPw] = useState('');
-  const [err, setErr] = useState('');
+function Login({ onDriver, onAdmin }) {
+  const [driverPw, setDriverPw] = useState('');
+  const [driverErr, setDriverErr] = useState('');
+  const [driverBusy, setDriverBusy] = useState(false);
 
-  function tryAdmin() {
-    if (pw && pw === settings.adminPassword) {
-      onAdmin();
-    } else {
-      setErr('Wrong password.');
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminPw, setAdminPw] = useState('');
+  const [adminErr, setAdminErr] = useState('');
+  const [adminBusy, setAdminBusy] = useState(false);
+
+  async function signInDriver() {
+    if (!driverPw) return;
+    setDriverErr(''); setDriverBusy(true);
+    try {
+      await auth.signInWithEmailAndPassword(DRIVER_EMAIL, driverPw);
+      onDriver();
+    } catch (e) {
+      setDriverErr('Incorrect password.');
     }
+    setDriverBusy(false);
+  }
+  async function signInAdmin() {
+    if (!adminPw) return;
+    setAdminErr(''); setAdminBusy(true);
+    try {
+      await auth.signInWithEmailAndPassword(ADMIN_EMAIL, adminPw);
+      onAdmin();
+    } catch (e) {
+      setAdminErr('Incorrect password.');
+    }
+    setAdminBusy(false);
   }
 
   return (
@@ -445,22 +472,36 @@ function Login({ settings, onDriver, onAdmin }) {
         <div className="dl-login-mark">Driver Log<span className="dot">.</span></div>
         <div className="dl-login-sub">Daily check-in, trips, expenses and OT</div>
 
-        <button className="dl-login-btn driver" onClick={onDriver}>Continue as Irham (Driver)</button>
+        <div className="dl-login-admin-box" style={{ marginTop: 6 }}>
+          <input
+            type="password"
+            placeholder="Irham's password"
+            value={driverPw}
+            onChange={e => { setDriverPw(e.target.value); setDriverErr(''); }}
+            onKeyDown={e => { if (e.key === 'Enter') signInDriver(); }}
+          />
+          <button className="dl-login-btn driver" style={{ marginTop: 0 }} disabled={driverBusy} onClick={signInDriver}>
+            {driverBusy ? 'Signing in…' : 'Sign in as Irham (Driver)'}
+          </button>
+          {driverErr && <div className="dl-login-err">{driverErr}</div>}
+        </div>
 
-        {!showPw ? (
-          <button className="dl-login-btn admin" onClick={() => setShowPw(true)}>Administrator login</button>
+        {!showAdmin ? (
+          <button className="dl-login-btn admin" onClick={() => setShowAdmin(true)}>Administrator login</button>
         ) : (
           <div className="dl-login-admin-box">
             <input
               type="password"
               placeholder="Admin password"
-              value={pw}
+              value={adminPw}
               autoFocus
-              onChange={e => { setPw(e.target.value); setErr(''); }}
-              onKeyDown={e => { if (e.key === 'Enter') tryAdmin(); }}
+              onChange={e => { setAdminPw(e.target.value); setAdminErr(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') signInAdmin(); }}
             />
-            <button className="dl-btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={tryAdmin}>Unlock</button>
-            {err && <div className="dl-login-err">{err}</div>}
+            <button className="dl-btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={adminBusy} onClick={signInAdmin}>
+              {adminBusy ? 'Signing in…' : 'Sign in'}
+            </button>
+            {adminErr && <div className="dl-login-err">{adminErr}</div>}
           </div>
         )}
 
@@ -832,9 +873,22 @@ function DriverLog() {
     setActiveTab('dashboard');
   }
   function handleLogout() {
+    auth.signOut();
     setAppStage('login');
     setActiveTab('today');
   }
+
+  // Stay signed in across visits (Firebase persists the session in the
+  // browser), so Irham and the admin don't have to re-enter their password
+  // every time they open the app from their home screen icon.
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(user => {
+      if (user && user.email === DRIVER_EMAIL) handleLoginDriver();
+      else if (user && user.email === ADMIN_EMAIL) handleLoginAdmin();
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------- settings ----------
   async function handleSaveSettings() {
@@ -844,8 +898,7 @@ function DriverLog() {
       startDate: settingsDraft.startDate || settings.startDate,
       standardStart: settingsDraft.standardStart || settings.standardStart,
       standardEnd: settingsDraft.standardEnd || settings.standardEnd,
-      breakHours: parseFloat(settingsDraft.breakHours) || 0,
-      adminPassword: settingsDraft.adminPassword || settings.adminPassword
+      breakHours: parseFloat(settingsDraft.breakHours) || 0
     };
     setSettingsState(next);
     setSettingsDraft(next);
@@ -940,7 +993,7 @@ function DriverLog() {
   const dashFlags = computeMonthFlags(monthAttendanceForDash, settings, dateStr);
 
   if (appStage === 'login') {
-    return <Login settings={settings} onDriver={handleLoginDriver} onAdmin={handleLoginAdmin} />;
+    return <Login onDriver={handleLoginDriver} onAdmin={handleLoginAdmin} />;
   }
 
   return (
@@ -1378,12 +1431,10 @@ function DriverLog() {
                 <div className="dl-field"><label>Unpaid break (hours)</label><input type="number" step="0.5" min="0" value={settingsDraft.breakHours} onChange={e => setSettingsDraft(d => ({ ...d, breakHours: e.target.value }))} /></div>
                 <div className="dl-field"><label>Paid hours/day (auto)</label><input type="text" disabled value={fmtHrs(paidHoursPerDay(settingsDraft)) + ' hrs'} /></div>
               </div>
-              <div className="dl-field-row">
-                <div className="dl-field"><label>Admin password</label><input type="text" value={settingsDraft.adminPassword} onChange={e => setSettingsDraft(d => ({ ...d, adminPassword: e.target.value }))} /></div>
-              </div>
               <button className="dl-btn-primary" style={{ marginTop: 6 }} onClick={handleSaveSettings}>Save settings</button>
               <div className="dl-save-note">{settingsSaveNote}</div>
               <div className="dl-hint">Hourly rate = monthly salary ÷ 26 days ÷ 8 hours. This rate is used for all OT calculations below. The driver's starting month ({settingsDraft.startDate ? settingsDraft.startDate.slice(0, 7) : '—'}) is automatically pro-rated by calendar days from the start date; every month after pays the full monthly salary.</div>
+              <div className="dl-hint" style={{ marginTop: 10 }}>Sign-in passwords are managed in Firebase Console → Authentication → Users, not here — see FIREBASE_AUTH_SETUP.md.</div>
             </div>
 
             <div className="dl-card">
