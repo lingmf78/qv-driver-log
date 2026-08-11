@@ -405,6 +405,7 @@ async function apiGet(key, setSync) {
     if (!doc.exists) return null;
     return JSON.parse(doc.data().value);
   } catch (e) {
+    console.error('[Driver Log] Firestore read failed for key "' + key + '":', e);
     if (setSync) setSync('err');
     return null;
   }
@@ -416,6 +417,7 @@ async function apiSet(key, val, setSync) {
     if (setSync) setSync('ok');
     return true;
   } catch (e) {
+    console.error('[Driver Log] Firestore write failed for key "' + key + '":', e);
     if (setSync) setSync('err');
     return false;
   }
@@ -475,6 +477,7 @@ function DriverLog() {
   const [activeTab, setActiveTab] = useState('today');
   const [settings, setSettingsState] = useState(DEFAULT_SETTINGS);
   const [currentRole, setCurrentRole] = useState('driver');
+  const isAdmin = currentRole === 'admin';
 
   const [attendanceCache, setAttendanceCache] = useState({}); // monthKey -> { date: entry }
   const [todayEntry, setTodayEntry] = useState({});
@@ -501,6 +504,10 @@ function DriverLog() {
   const [phDate, setPhDate] = useState('');
   const [phName, setPhName] = useState('');
   const [settingsSaveNote, setSettingsSaveNote] = useState('');
+
+  const [attDate, setAttDate] = useState(toDateStr(today));
+  const [attForm, setAttForm] = useState({ checkIn: '', checkOut: '', status: 'present', remark: '' });
+  const [attSaveNote, setAttSaveNote] = useState('');
 
   const dateStr = toDateStr(today);
   const monthKey = toMonthKey(today);
@@ -867,11 +874,64 @@ function DriverLog() {
     refreshRecentDays(next);
   }
 
+  // ---------- manual attendance entry (backfill / correction) ----------
+  useEffect(() => {
+    if (!isAdmin) return;
+    (async () => {
+      const mk = monthKeyFromDateStr(attDate);
+      const att = await loadAttendanceMonth(mk);
+      const e = att[attDate] || {};
+      setAttForm({
+        checkIn: e.checkIn || '',
+        checkOut: e.checkOut || '',
+        status: e.status || 'present',
+        remark: e.remark || ''
+      });
+      setAttSaveNote('');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attDate, isAdmin]);
+
+  async function handleSaveAttendanceEntry() {
+    const ds = attDate;
+    const mk = monthKeyFromDateStr(ds);
+    const att = await loadAttendanceMonth(mk);
+    const entry = { status: attForm.status, enteredBy: 'Admin (manual entry)' };
+    if (attForm.status === 'present') {
+      if (attForm.checkIn) entry.checkIn = attForm.checkIn;
+      if (attForm.checkOut) entry.checkOut = attForm.checkOut;
+    }
+    if (attForm.remark) entry.remark = attForm.remark;
+
+    const updated = { ...att, [ds]: entry };
+    await saveAttendanceMonth(mk, updated);
+    if (ds === dateStr) {
+      setTodayEntry(entry);
+      setRemarkDraft(entry.remark || '');
+    }
+    refreshRecentDays();
+    setAttSaveNote('Saved ' + ds + '.');
+    setTimeout(() => setAttSaveNote(''), 2000);
+  }
+
+  async function handleClearAttendanceEntry() {
+    const ds = attDate;
+    const mk = monthKeyFromDateStr(ds);
+    const att = await loadAttendanceMonth(mk);
+    const updated = { ...att };
+    delete updated[ds];
+    await saveAttendanceMonth(mk, updated);
+    setAttForm({ checkIn: '', checkOut: '', status: 'present', remark: '' });
+    if (ds === dateStr) { setTodayEntry({}); setRemarkDraft(''); }
+    refreshRecentDays();
+    setAttSaveNote('Cleared ' + ds + '.');
+    setTimeout(() => setAttSaveNote(''), 2000);
+  }
+
   // ---------- derived ----------
   const dt = getDayType(dateStr, settings);
   const status = todayEntry.status || 'present';
   const calc = computeDay(dateStr, todayEntry, settings);
-  const isAdmin = currentRole === 'admin';
   const expTotal = expenses.reduce((s, e) => s + e.amount, 0);
   const reportSummary = buildReportSummary();
 
@@ -905,9 +965,9 @@ function DriverLog() {
           </div>
         </div>
         <nav className="dl-tabs">
-          {(isAdmin ? ['dashboard', 'trips', 'expenses', 'reports', 'settings'] : ['today', 'trips', 'expenses', 'reports']).map(tab => (
+          {(isAdmin ? ['dashboard', 'attendance', 'trips', 'expenses', 'reports', 'settings'] : ['today', 'trips', 'expenses', 'reports']).map(tab => (
             <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>
-              {tab === 'today' ? 'Today' : tab === 'dashboard' ? 'Dashboard' : tab === 'trips' ? 'Trips' : tab === 'expenses' ? 'Expenses' : tab === 'reports' ? 'Reports' : 'Settings'}
+              {tab === 'today' ? 'Today' : tab === 'dashboard' ? 'Dashboard' : tab === 'attendance' ? 'Attendance' : tab === 'trips' ? 'Trips' : tab === 'expenses' ? 'Expenses' : tab === 'reports' ? 'Reports' : 'Settings'}
             </button>
           ))}
         </nav>
@@ -972,11 +1032,81 @@ function DriverLog() {
             <div className="dl-card">
               <h2>Quick links</h2>
               <div className="dl-quick-links">
+                <button className="dl-btn-primary" onClick={() => setActiveTab('attendance')}>Backfill attendance</button>
                 <button className="dl-btn-primary" onClick={() => setActiveTab('reports')}>Open reports</button>
                 <button className="dl-btn-primary" onClick={() => setActiveTab('expenses')}>Review expenses</button>
                 <button className="dl-btn-primary" onClick={() => setActiveTab('trips')}>Review trips</button>
                 <button className="dl-btn-primary" onClick={() => setActiveTab('settings')}>Manage settings</button>
               </div>
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'attendance' && (
+          <section>
+            <div className="dl-card">
+              <h2>Manual attendance entry</h2>
+              <div className="dl-hint" style={{ marginBottom: 12 }}>
+                Use this to backfill or correct a check-in/check-out for any date — e.g. entering July's records by hand so OT reports are accurate.
+              </div>
+              <div className="dl-field-row">
+                <div className="dl-field"><label>Date</label><input type="date" value={attDate} onChange={e => setAttDate(e.target.value)} /></div>
+                <div className="dl-field">
+                  <label>Status</label>
+                  <select value={attForm.status} onChange={e => setAttForm(f => ({ ...f, status: e.target.value }))}>
+                    <option value="present">Present</option>
+                    <option value="leave">On leave</option>
+                    <option value="medical_leave">Medical leave</option>
+                  </select>
+                </div>
+              </div>
+              {attForm.status === 'present' && (
+                <div className="dl-field-row">
+                  <div className="dl-field"><label>Check-in</label><input type="time" value={attForm.checkIn} onChange={e => setAttForm(f => ({ ...f, checkIn: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Check-out</label><input type="time" value={attForm.checkOut} onChange={e => setAttForm(f => ({ ...f, checkOut: e.target.value }))} /></div>
+                </div>
+              )}
+              <div className="dl-field" style={{ marginTop: 10 }}>
+                <label>Remark</label>
+                <input type="text" placeholder="Optional" value={attForm.remark} onChange={e => setAttForm(f => ({ ...f, remark: e.target.value }))} />
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button className="dl-btn-primary" onClick={handleSaveAttendanceEntry}>Save this day</button>
+                <button className="qdl-btn" style={{ background: '#F7E7E1', color: '#B4472A', border: 'none', borderRadius: 7, padding: '10px 14px', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' }} onClick={handleClearAttendanceEntry}>Clear this day</button>
+              </div>
+              <div className="dl-save-note">{attSaveNote}</div>
+            </div>
+
+            <div className="dl-card">
+              <h2>{new Date(attDate + 'T00:00:00').toLocaleDateString('en-MY', { month: 'long', year: 'numeric' })} — entries so far</h2>
+              {(() => {
+                const mk = monthKeyFromDateStr(attDate);
+                const monthData = attendanceCache[mk] || {};
+                const rows = Object.keys(monthData).sort().map(ds => ({ dateStr: ds, entry: monthData[ds], calc: computeDay(ds, monthData[ds], settings) }));
+                if (rows.length === 0) return <div className="dl-empty-note">No entries saved for this month yet.</div>;
+                return (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="dl-breakdown-table">
+                      <thead><tr><th>Date</th><th>Status</th><th>In</th><th>Out</th><th className="num">Hrs</th><th></th></tr></thead>
+                      <tbody>
+                        {rows.map(r => {
+                          const isLeave = r.entry.status === 'leave' || r.entry.status === 'medical_leave';
+                          return (
+                            <tr key={r.dateStr}>
+                              <td>{r.dateStr}</td>
+                              <td>{statusLabel(r.entry.status || 'present')}</td>
+                              <td>{isLeave ? '—' : (r.entry.checkIn || '—')}</td>
+                              <td>{isLeave ? '—' : (r.entry.checkOut || '—')}</td>
+                              <td className="num">{(r.calc && !isLeave) ? fmtHrs(r.calc.worked) : '—'}</td>
+                              <td><button className="dl-log-del" onClick={() => setAttDate(r.dateStr)} aria-label="Edit this day">✎</button></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
             </div>
           </section>
         )}
