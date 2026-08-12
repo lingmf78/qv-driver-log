@@ -18,6 +18,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -401,6 +402,17 @@ const firebaseConfig = {
   appId: "1:20395882118:web:b0497c700b781809394307"
 };
 firebase.initializeApp(firebaseConfig);
+
+// App Check: verifies requests actually come from this page (not a script
+// hitting Firebase directly with the public config above). Get your site key
+// from Firebase Console → App Check → register a reCAPTCHA v3 provider — see
+// FIREBASE_APP_CHECK_SETUP.md. Harmless to leave the placeholder in place
+// until you do that; App Check just won't be enforced yet.
+const RECAPTCHA_V3_SITE_KEY = 'YOUR_RECAPTCHA_V3_SITE_KEY';
+if (RECAPTCHA_V3_SITE_KEY && RECAPTCHA_V3_SITE_KEY !== 'YOUR_RECAPTCHA_V3_SITE_KEY') {
+  firebase.appCheck().activate(RECAPTCHA_V3_SITE_KEY, true);
+}
+
 const db = firebase.firestore();
 const auth = firebase.auth();
 
@@ -505,7 +517,7 @@ function Login({ onDriver, onAdmin }) {
           </div>
         )}
 
-        <div className="dl-login-foot">Shared logbook — check-ins, trips and expenses are visible to everyone using this app.</div>
+        <div className="dl-login-foot">Shared logbook — check-ins, trips and expenses are visible only to authorized users.</div>
       </div>
     </div>
   );
@@ -645,6 +657,7 @@ function DriverLog() {
   // ---------- trips ----------
   async function handleTripSubmit(e) {
     e.preventDefault();
+    if (!isAdmin && tripForm.date !== dateStr) return; // drivers can only log trips for today
     const mk = monthKeyFromDateStr(tripForm.date);
     const trip = {
       id: genId(),
@@ -664,6 +677,8 @@ function DriverLog() {
   }
   async function handleDeleteTrip(id) {
     const arr = await loadMonthArray('trips', monthKey);
+    const target = arr.find(t => t.id === id);
+    if (target && !isAdmin && target.date !== dateStr) return; // drivers can't remove past records
     const nextArr = arr.filter(t => t.id !== id);
     await saveMonthArray('trips', monthKey, nextArr);
     setTrips(nextArr);
@@ -681,6 +696,7 @@ function DriverLog() {
   }
   async function handleExpenseSubmit(e) {
     e.preventDefault();
+    if (!isAdmin && expForm.date !== dateStr) return; // drivers can only log expenses for today
     const mk = monthKeyFromDateStr(expForm.date);
     const exp = {
       id: genId(),
@@ -699,6 +715,8 @@ function DriverLog() {
   }
   async function handleDeleteExpense(id) {
     const arr = await loadMonthArray('expenses', monthKey);
+    const target = arr.find(x => x.id === id);
+    if (target && !isAdmin && target.date !== dateStr) return; // drivers can't remove past records
     const nextArr = arr.filter(x => x.id !== id);
     await saveMonthArray('expenses', monthKey, nextArr);
     setExpenses(nextArr);
@@ -1018,7 +1036,7 @@ function DriverLog() {
           </div>
         </div>
         <nav className="dl-tabs">
-          {(isAdmin ? ['dashboard', 'attendance', 'trips', 'expenses', 'reports', 'settings'] : ['today', 'trips', 'expenses', 'reports']).map(tab => (
+          {(isAdmin ? ['dashboard', 'attendance', 'trips', 'expenses', 'reports', 'settings'] : ['today', 'trips', 'expenses']).map(tab => (
             <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>
               {tab === 'today' ? 'Today' : tab === 'dashboard' ? 'Dashboard' : tab === 'attendance' ? 'Attendance' : tab === 'trips' ? 'Trips' : tab === 'expenses' ? 'Expenses' : tab === 'reports' ? 'Reports' : 'Settings'}
             </button>
@@ -1261,7 +1279,7 @@ function DriverLog() {
               <h2>Log a trip (OT only)</h2>
               <form className="dl-form" onSubmit={handleTripSubmit}>
                 <div className="dl-field-row">
-                  <div className="dl-field"><label>Date</label><input type="date" required value={tripForm.date} onChange={e => setTripForm(f => ({ ...f, date: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Date{!isAdmin ? ' (today only)' : ''}</label><input type="date" required value={tripForm.date} min={!isAdmin ? dateStr : undefined} max={!isAdmin ? dateStr : undefined} onChange={e => setTripForm(f => ({ ...f, date: e.target.value }))} /></div>
                   <div className="dl-field"><label>Time</label><input type="time" value={tripForm.time} onChange={e => setTripForm(f => ({ ...f, time: e.target.value }))} /></div>
                 </div>
                 <div className="dl-field-row">
@@ -1286,7 +1304,9 @@ function DriverLog() {
                     <div className="t2">{t.date}{t.time ? ' · ' + t.time : ''}{t.purpose ? ' · ' + t.purpose : ''}</div>
                   </div>
                   <div className="dl-log-amt">{t.km ? t.km + ' km' : ''}</div>
-                  <button className="dl-log-del" onClick={() => handleDeleteTrip(t.id)} aria-label="Delete trip">&times;</button>
+                  {(isAdmin || t.date === dateStr) && (
+                    <button className="dl-log-del" onClick={() => handleDeleteTrip(t.id)} aria-label="Delete trip">&times;</button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1299,7 +1319,7 @@ function DriverLog() {
               <h2>Log an expense</h2>
               <form className="dl-form" onSubmit={handleExpenseSubmit}>
                 <div className="dl-field-row">
-                  <div className="dl-field"><label>Date</label><input type="date" required value={expForm.date} onChange={e => setExpForm(f => ({ ...f, date: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Date{!isAdmin ? ' (today only)' : ''}</label><input type="date" required value={expForm.date} min={!isAdmin ? dateStr : undefined} max={!isAdmin ? dateStr : undefined} onChange={e => setExpForm(f => ({ ...f, date: e.target.value }))} /></div>
                   <div className="dl-field">
                     <label>Category</label>
                     <select value={expForm.category} onChange={e => setExpForm(f => ({ ...f, category: e.target.value }))}>
@@ -1350,7 +1370,9 @@ function DriverLog() {
                       <div className="t2">{ex.date}{ex.note ? ' · ' + ex.note : ''}</div>
                     </div>
                     <div className="dl-log-amt">{fmtMoney(ex.amount)}</div>
-                    <button className="dl-log-del" onClick={() => handleDeleteExpense(ex.id)} aria-label="Delete expense">&times;</button>
+                    {(isAdmin || ex.date === dateStr) && (
+                      <button className="dl-log-del" onClick={() => handleDeleteExpense(ex.id)} aria-label="Delete expense">&times;</button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1358,7 +1380,7 @@ function DriverLog() {
           </section>
         )}
 
-        {activeTab === 'reports' && (
+        {activeTab === 'reports' && isAdmin && (
           <section>
             <div className="dl-month-picker">
               <button onClick={() => shiftReportMonth(-1)}>←</button>
@@ -1471,7 +1493,7 @@ function DriverLog() {
       </main>
 
       <footer className="dl-footer">
-        <p>Shared logbook — check-ins, trips and expenses are visible to everyone using this app.</p>
+        <p>Shared logbook — check-ins, trips and expenses are visible only to authorized users.</p>
       </footer>
     </div>
   );
