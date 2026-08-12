@@ -562,6 +562,9 @@ function DriverLog() {
   const [attForm, setAttForm] = useState({ checkIn: '', checkOut: '', status: 'present', remark: '' });
   const [attSaveNote, setAttSaveNote] = useState('');
 
+  const [auditRows, setAuditRows] = useState(null); // null = not loaded yet
+  const [auditLoading, setAuditLoading] = useState(false);
+
   const dateStr = toDateStr(today);
   const monthKey = toMonthKey(today);
 
@@ -635,15 +638,61 @@ function DriverLog() {
     refreshRecentDays();
   }
 
+  // Independent of the device's own clock: Firestore stamps this using its
+  // own server time, so it can't be faked by changing the phone's date/time.
+  // Kept separate from the actual attendance record purely as a cross-check.
+  async function logTimeAudit(type, claimedTime) {
+    try {
+      await db.collection('driverlog_audit').add({
+        date: dateStr,
+        type: type,
+        claimedTime: claimedTime,
+        serverTime: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } catch (e) {
+      console.error('[Driver Log] audit log failed:', e);
+    }
+  }
+
+  async function loadAuditTrail() {
+    setAuditLoading(true);
+    try {
+      const snap = await db.collection('driverlog_audit').orderBy('serverTime', 'desc').limit(20).get();
+      const rows = snap.docs.map(doc => {
+        const d = doc.data();
+        let serverKL = null, diffMinutes = null;
+        if (d.serverTime) {
+          const jsDate = d.serverTime.toDate();
+          serverKL = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: '2-digit', minute: '2-digit', hour12: false }).format(jsDate);
+          const [ch, cm] = (d.claimedTime || '0:0').split(':').map(Number);
+          const claimedMinutes = ch * 60 + cm;
+          const [sh, sm] = serverKL.split(':').map(Number);
+          const serverMinutes = sh * 60 + sm;
+          diffMinutes = Math.abs(claimedMinutes - serverMinutes);
+        }
+        return { id: doc.id, date: d.date, type: d.type, claimedTime: d.claimedTime, serverKL, diffMinutes, pending: !d.serverTime };
+      });
+      setAuditRows(rows);
+    } catch (e) {
+      console.error('[Driver Log] failed to load audit trail:', e);
+      setAuditRows([]);
+    }
+    setAuditLoading(false);
+  }
+
   function handleCheckIn() {
     const kl = nowInKL();
-    const next = { ...todayEntry, checkIn: kl.hh + ':' + kl.mm, enteredBy: CURRENT_USER };
+    const time = kl.hh + ':' + kl.mm;
+    const next = { ...todayEntry, checkIn: time, enteredBy: CURRENT_USER };
     persistTodayEntry(next);
+    logTimeAudit('checkin', time);
   }
   function handleCheckOut() {
     const kl = nowInKL();
-    const next = { ...todayEntry, checkOut: kl.hh + ':' + kl.mm, enteredBy: CURRENT_USER };
+    const time = kl.hh + ':' + kl.mm;
+    const next = { ...todayEntry, checkOut: time, enteredBy: CURRENT_USER };
     persistTodayEntry(next);
+    logTimeAudit('checkout', time);
   }
   function handleStatusChange(status) {
     const next = { ...todayEntry, status, enteredBy: CURRENT_USER };
@@ -1098,6 +1147,38 @@ function DriverLog() {
                   <tr><td>Trips logged</td><td className="num">{trips.length} ({Math.round(dashSummary.tripKm * 10) / 10} km)</td></tr>
                 </tbody>
               </table>
+            </div>
+
+            <div className="dl-card">
+              <div className="dl-row-between">
+                <h2 style={{ marginBottom: 0 }}>Check-in/out time integrity</h2>
+                <button className="dl-btn-primary" onClick={loadAuditTrail} disabled={auditLoading}>
+                  {auditLoading ? 'Loading…' : (auditRows === null ? 'Load recent activity' : 'Refresh')}
+                </button>
+              </div>
+              <div className="dl-hint" style={{ marginTop: 8 }}>
+                "Reported" is the time Irham's phone claimed. "Server" is when Google's Firestore servers actually received the request — independent of his phone's clock, so it can't be faked by changing the device's date/time. A large gap between the two is worth asking about.
+              </div>
+              {auditRows !== null && (
+                auditRows.length === 0 ? <div className="dl-empty-note" style={{ marginTop: 8 }}>No activity logged yet.</div> : (
+                  <div style={{ overflowX: 'auto', marginTop: 10 }}>
+                    <table className="dl-breakdown-table">
+                      <thead><tr><th>Date</th><th>Action</th><th>Reported</th><th>Server</th><th></th></tr></thead>
+                      <tbody>
+                        {auditRows.map(r => (
+                          <tr key={r.id}>
+                            <td>{r.date}</td>
+                            <td style={{ textTransform: 'capitalize' }}>{r.type}</td>
+                            <td className="num">{r.claimedTime}</td>
+                            <td className="num">{r.pending ? 'pending…' : r.serverKL}</td>
+                            <td>{!r.pending && r.diffMinutes > 3 && <span className="dl-badge flag">±{r.diffMinutes}m mismatch</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              )}
             </div>
 
             <div className="dl-card">
