@@ -18,7 +18,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check-compat.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -405,14 +404,6 @@ firebase.initializeApp(firebaseConfig);
 
 // App Check: verifies requests actually come from this page (not a script
 // hitting Firebase directly with the public config above). Get your site key
-// from Firebase Console → App Check → register a reCAPTCHA v3 provider — see
-// FIREBASE_APP_CHECK_SETUP.md. Harmless to leave the placeholder in place
-// until you do that; App Check just won't be enforced yet.
-const RECAPTCHA_V3_SITE_KEY = 'YOUR_RECAPTCHA_V3_SITE_KEY';
-if (RECAPTCHA_V3_SITE_KEY && RECAPTCHA_V3_SITE_KEY !== 'YOUR_RECAPTCHA_V3_SITE_KEY') {
-  firebase.appCheck().activate(RECAPTCHA_V3_SITE_KEY, true);
-}
-
 const db = firebase.firestore();
 const auth = firebase.auth();
 
@@ -541,16 +532,16 @@ function DriverLog() {
   const [tripForm, setTripForm] = useState({ date: toDateStr(today), time: '', from: '', to: '', purpose: '', km: '' });
 
   const [expenses, setExpenses] = useState([]);
-  const [expForm, setExpForm] = useState({ date: toDateStr(today), category: 'Toll', amount: '', note: '', photo: null });
+  const [expForm, setExpForm] = useState({ date: toDateStr(today), category: 'Toll', amount: '', note: '', photo: null, reimburse: false });
 
-  const [floatLedger, setFloatLedger] = useState([]);
-  const [floatSpendForm, setFloatSpendForm] = useState({ category: 'Groceries', amount: '', note: '' });
-  const [floatGiveForm, setFloatGiveForm] = useState({ amount: '', method: 'Cash', note: '' });
+  const [floatEntries, setFloatEntries] = useState([]);
+  const [floatGiveForm, setFloatGiveForm] = useState({ amount: '', method: 'Cash', category: '', note: '' });
 
   const [reportMonthDate, setReportMonthDate] = useState(todayInKL());
   const [reportAttendance, setReportAttendance] = useState({});
   const [reportTrips, setReportTrips] = useState([]);
   const [reportExpenses, setReportExpenses] = useState([]);
+  const [reportFloat, setReportFloat] = useState([]);
   const [copyNote, setCopyNote] = useState('');
   const [exportNote, setExportNote] = useState('');
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -609,8 +600,8 @@ function DriverLog() {
       setTrips(tr);
       const ex = await loadMonthArray('expenses', monthKey);
       setExpenses(ex);
-      const fl = (await apiGet('float_ledger', setSyncStatus)) || [];
-      setFloatLedger(fl);
+      const fl = await loadMonthArray('float', monthKey);
+      setFloatEntries(fl);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -760,13 +751,14 @@ function DriverLog() {
       amount: parseFloat(expForm.amount) || 0,
       note: expForm.note,
       enteredBy: CURRENT_USER,
-      photo: expForm.photo || null
+      photo: expForm.photo || null,
+      reimburse: !!expForm.reimburse
     };
     const arr = await loadMonthArray('expenses', mk);
     const nextArr = [...arr, exp];
     await saveMonthArray('expenses', mk, nextArr);
     if (mk === monthKey) setExpenses(nextArr);
-    setExpForm({ date: toDateStr(today), category: 'Toll', amount: '', note: '', photo: null });
+    setExpForm({ date: toDateStr(today), category: 'Toll', amount: '', note: '', photo: null, reimburse: false });
   }
   async function handleDeleteExpense(id) {
     const arr = await loadMonthArray('expenses', monthKey);
@@ -777,39 +769,28 @@ function DriverLog() {
     setExpenses(nextArr);
   }
 
-  // ---------- float & errands ledger ----------
-  // A running balance, not month-partitioned like other data — the whole
-  // point is that float given in one month can still be spent down (or
-  // still owed as reimbursement) the next, with zero manual arithmetic.
-  async function saveFloatLedger(nextLedger) {
-    setFloatLedger(nextLedger);
-    await apiSet('float_ledger', nextLedger, setSyncStatus);
-  }
-  async function handleAddFloatSpend(e) {
-    e.preventDefault();
-    if (!floatSpendForm.amount) return;
-    const entry = {
-      id: genId(), type: 'spend', date: dateStr,
-      category: floatSpendForm.category, amount: parseFloat(floatSpendForm.amount) || 0,
-      note: floatSpendForm.note, enteredBy: isAdmin ? 'Admin' : CURRENT_USER
-    };
-    await saveFloatLedger([...floatLedger, entry]);
-    setFloatSpendForm({ category: 'Groceries', amount: '', note: '' });
-  }
+  // ---------- float given (admin logs this separately; Irham logs actual
+  // spending once, via the expense form above, ticking "reimburse" when he
+  // used his own money instead of float) ----------
   async function handleAddFloatGiven(e) {
     e.preventDefault();
     if (!isAdmin || !floatGiveForm.amount) return;
     const entry = {
-      id: genId(), type: 'float', date: dateStr,
-      method: floatGiveForm.method, amount: parseFloat(floatGiveForm.amount) || 0,
+      id: genId(), date: dateStr,
+      method: floatGiveForm.method, category: floatGiveForm.category || null,
+      amount: parseFloat(floatGiveForm.amount) || 0,
       note: floatGiveForm.note, enteredBy: 'Admin'
     };
-    await saveFloatLedger([...floatLedger, entry]);
-    setFloatGiveForm({ amount: '', method: 'Cash', note: '' });
+    const nextArr = [...floatEntries, entry];
+    await saveMonthArray('float', monthKey, nextArr);
+    setFloatEntries(nextArr);
+    setFloatGiveForm({ amount: '', method: 'Cash', category: '', note: '' });
   }
   async function handleDeleteFloatEntry(id) {
     if (!isAdmin) return;
-    await saveFloatLedger(floatLedger.filter(e => e.id !== id));
+    const nextArr = floatEntries.filter(e => e.id !== id);
+    await saveMonthArray('float', monthKey, nextArr);
+    setFloatEntries(nextArr);
   }
 
   // ---------- reports & dashboard summaries ----------
@@ -818,9 +799,11 @@ function DriverLog() {
     const att = await loadAttendanceMonth(mk);
     const tr = await loadMonthArray('trips', mk);
     const ex = await loadMonthArray('expenses', mk);
+    const fl = await loadMonthArray('float', mk);
     setReportAttendance(att);
     setReportTrips(tr);
     setReportExpenses(ex);
+    setReportFloat(fl);
   }, [loadAttendanceMonth, loadMonthArray]);
 
   useEffect(() => { loadReport(reportMonthDate); }, [reportMonthDate, loadReport]);
@@ -831,7 +814,7 @@ function DriverLog() {
     setReportMonthDate(d);
   }
 
-  function buildSummaryFor(attendanceObj, tripsArr, expensesArr) {
+  function buildSummaryFor(attendanceObj, tripsArr, expensesArr, floatArr) {
     let workedDays = 0, totalHours = 0, workdayOtPay = 0, restOtPay = 0, phOtPay = 0, leaveDays = 0, medicalDays = 0;
     const dailyRows = [];
     Object.keys(attendanceObj).sort().forEach(ds => {
@@ -851,11 +834,14 @@ function DriverLog() {
     });
     const totalOtPay = workdayOtPay + restOtPay + phOtPay;
     const expTotal = expensesArr.reduce((s, e) => s + e.amount, 0);
+    const reimburseTotal = expensesArr.filter(e => e.reimburse).reduce((s, e) => s + e.amount, 0);
+    const floatFundedTotal = expensesArr.filter(e => !e.reimburse).reduce((s, e) => s + e.amount, 0);
+    const floatGivenTotal = (floatArr || []).reduce((s, e) => s + e.amount, 0);
     const tripKm = tripsArr.reduce((s, t) => s + (t.km || 0), 0);
-    return { workedDays, totalHours, workdayOtPay, restOtPay, phOtPay, totalOtPay, leaveDays, medicalDays, dailyRows, expTotal, tripKm };
+    return { workedDays, totalHours, workdayOtPay, restOtPay, phOtPay, totalOtPay, leaveDays, medicalDays, dailyRows, expTotal, reimburseTotal, floatFundedTotal, floatGivenTotal, tripKm };
   }
   function buildReportSummary() {
-    return buildSummaryFor(reportAttendance, reportTrips, reportExpenses);
+    return buildSummaryFor(reportAttendance, reportTrips, reportExpenses, reportFloat);
   }
 
   function buildReportText(summary) {
@@ -875,6 +861,9 @@ function DriverLog() {
     lines.push('Estimated total pay: ' + (settings.monthlySalary ? fmtMoney(baseSalary + summary.totalOtPay) : 'set salary first'));
     lines.push('');
     lines.push('Expenses claimed: ' + fmtMoney(summary.expTotal));
+    lines.push('  Of which paid from float: ' + fmtMoney(summary.floatFundedTotal));
+    lines.push('  Of which owed to Irham (reimbursement): ' + fmtMoney(summary.reimburseTotal));
+    lines.push('Float given to Irham this month: ' + fmtMoney(summary.floatGivenTotal));
     lines.push('Trips logged: ' + reportTrips.length + ' (' + (Math.round(summary.tripKm * 10) / 10) + ' km)');
     lines.push('');
     lines.push('Daily breakdown:');
@@ -909,12 +898,19 @@ function DriverLog() {
     while (cur <= toD) { monthKeys.add(toMonthKey(cur)); cur.setMonth(cur.getMonth() + 1); }
 
     const attByMonth = {};
-    for (const mk of monthKeys) attByMonth[mk] = await loadAttendanceMonth(mk);
+    const expByMonth = {};
+    const floatByMonth = {};
+    for (const mk of monthKeys) {
+      attByMonth[mk] = await loadAttendanceMonth(mk);
+      expByMonth[mk] = await loadMonthArray('expenses', mk);
+      floatByMonth[mk] = await loadMonthArray('float', mk);
+    }
 
     const rows = [];
     rows.push(['Qvirtue Sdn Bhd — Driver Log export']);
     rows.push(['Date range', exportFrom + ' to ' + exportTo]);
     rows.push([]);
+    rows.push(['ATTENDANCE']);
     rows.push(['Date', 'Day', 'Day type', 'Status', 'Check in', 'Check out', 'Hours worked', 'OT hours', 'OT pay (RM)', 'Remark']);
 
     // Walk every calendar day in the range (not just days with an entry) so
@@ -954,6 +950,34 @@ function DriverLog() {
         entry.remark || ''
       ]);
     }
+
+    rows.push([]);
+    rows.push(['EXPENSES']);
+    rows.push(['Date', 'Category', 'Amount (RM)', 'Needs reimbursement?', 'Note', 'Entered by']);
+    let expenseRunningTotal = 0, reimburseRunningTotal = 0;
+    Object.keys(expByMonth).sort().forEach(mk => {
+      expByMonth[mk].filter(e => e.date >= exportFrom && e.date <= exportTo).sort((a, b) => a.date.localeCompare(b.date)).forEach(e => {
+        expenseRunningTotal += e.amount;
+        if (e.reimburse) reimburseRunningTotal += e.amount;
+        rows.push([e.date, e.category, e.amount.toFixed(2), e.reimburse ? 'Yes' : 'No', e.note || '', e.enteredBy || '']);
+      });
+    });
+    rows.push(['', '', '', '', '', '']);
+    rows.push(['Total expenses', '', expenseRunningTotal.toFixed(2), '', '', '']);
+    rows.push(['Total owed to Irham (reimbursement)', '', reimburseRunningTotal.toFixed(2), '', '', '']);
+
+    rows.push([]);
+    rows.push(['FLOAT GIVEN']);
+    rows.push(['Date', 'Method', 'Category', 'Amount (RM)', 'Note']);
+    let floatRunningTotal = 0;
+    Object.keys(floatByMonth).sort().forEach(mk => {
+      floatByMonth[mk].filter(e => e.date >= exportFrom && e.date <= exportTo).sort((a, b) => a.date.localeCompare(b.date)).forEach(e => {
+        floatRunningTotal += e.amount;
+        rows.push([e.date, e.method, e.category || '', e.amount.toFixed(2), e.note || '']);
+      });
+    });
+    rows.push(['', '', '', '', '']);
+    rows.push(['Total float given', '', '', floatRunningTotal.toFixed(2), '']);
 
     const csvContent = rows.map(r => r.map(csvEscape).join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1094,13 +1118,14 @@ function DriverLog() {
   const status = todayEntry.status || 'present';
   const calc = computeDay(dateStr, todayEntry, settings);
   const expTotal = expenses.reduce((s, e) => s + e.amount, 0);
-  const floatGivenTotal = floatLedger.filter(e => e.type === 'float').reduce((s, e) => s + e.amount, 0);
-  const floatSpentTotal = floatLedger.filter(e => e.type === 'spend').reduce((s, e) => s + e.amount, 0);
-  const floatBalance = floatGivenTotal - floatSpentTotal;
+  const reimburseTotal = expenses.filter(e => e.reimburse).reduce((s, e) => s + e.amount, 0);
+  const floatFundedTotal = expenses.filter(e => !e.reimburse).reduce((s, e) => s + e.amount, 0);
+  const floatGivenTotal = floatEntries.reduce((s, e) => s + e.amount, 0);
+  const floatBalance = floatGivenTotal - floatFundedTotal;
   const reportSummary = buildReportSummary();
 
   const monthAttendanceForDash = attendanceCache[monthKey] || {};
-  const dashSummary = buildSummaryFor(monthAttendanceForDash, trips, expenses);
+  const dashSummary = buildSummaryFor(monthAttendanceForDash, trips, expenses, floatEntries);
   const dashFlags = computeMonthFlags(monthAttendanceForDash, settings, dateStr);
 
   if (appStage === 'login') {
@@ -1188,6 +1213,8 @@ function DriverLog() {
                   <tr><td>Rest day pay</td><td className="num">{fmtMoney(dashSummary.restOtPay)}</td></tr>
                   <tr><td>Public holiday pay</td><td className="num">{fmtMoney(dashSummary.phOtPay)}</td></tr>
                   <tr><td>Expenses claimed</td><td className="num">{fmtMoney(dashSummary.expTotal)}</td></tr>
+                  <tr><td style={{ paddingLeft: 18, color: '#8B93A0' }}>— owed to Irham</td><td className="num">{fmtMoney(dashSummary.reimburseTotal)}</td></tr>
+                  <tr><td>Float given</td><td className="num">{fmtMoney(dashSummary.floatGivenTotal)}</td></tr>
                   <tr><td>Trips logged</td><td className="num">{trips.length} ({Math.round(dashSummary.tripKm * 10) / 10} km)</td></tr>
                 </tbody>
               </table>
@@ -1451,6 +1478,9 @@ function DriverLog() {
                       <option>Toll</option>
                       <option>Parking</option>
                       <option>Maintenance</option>
+                      <option>Groceries</option>
+                      <option>Courier</option>
+                      <option>Laundry</option>
                       <option>Other</option>
                     </select>
                   </div>
@@ -1469,6 +1499,10 @@ function DriverLog() {
                     </div>
                   )}
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '8px 10px', background: '#FBF0DA', borderRadius: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={expForm.reimburse} onChange={e => setExpForm(f => ({ ...f, reimburse: e.target.checked }))} />
+                  I paid this with my own money — needs reimbursement
+                </label>
                 <button type="submit" className="dl-btn-primary">Add expense</button>
               </form>
             </div>
@@ -1477,6 +1511,11 @@ function DriverLog() {
                 <h2 style={{ marginBottom: 0 }}>Expenses this month</h2>
                 <span className="dl-badge workday">{fmtMoney(expTotal)}</span>
               </div>
+              {reimburseTotal > 0 && (
+                <div className="dl-hint" style={{ marginTop: 6, background: '#FBF0DA', padding: '8px 10px', borderRadius: 8, color: '#9C6E1F', fontWeight: 600 }}>
+                  Owed to Irham this month: {fmtMoney(reimburseTotal)} (paid from his own money)
+                </div>
+              )}
               <div style={{ marginTop: 8 }}>
                 {expenses.length === 0 && <div className="dl-empty-note">No expenses logged this month.</div>}
                 {[...expenses].sort((a, b) => b.date.localeCompare(a.date)).map((ex, i) => (
@@ -1491,7 +1530,7 @@ function DriverLog() {
                     )}
                     <div className="dl-log-idx">{i + 1}</div>
                     <div className="dl-log-main">
-                      <div className="t1">{ex.category}</div>
+                      <div className="t1">{ex.category}{ex.reimburse && <span className="dl-badge flag" style={{ marginLeft: 6 }}>Reimburse</span>}</div>
                       <div className="t2">{ex.date}{ex.note ? ' · ' + ex.note : ''}</div>
                     </div>
                     <div className="dl-log-amt">{fmtMoney(ex.amount)}</div>
@@ -1505,70 +1544,58 @@ function DriverLog() {
 
             <div className="dl-card">
               <div className="dl-row-between">
-                <h2 style={{ marginBottom: 0 }}>Float &amp; errands</h2>
+                <h2 style={{ marginBottom: 0 }}>Float given to Irham</h2>
                 <span className="dl-badge" style={{ background: floatBalance >= 0 ? '#E2EFEC' : '#F7E7E1', color: floatBalance >= 0 ? '#2F6F63' : '#B4472A' }}>
-                  {floatBalance >= 0 ? 'Irham is holding ' + fmtMoney(floatBalance) : 'Owed to Irham: ' + fmtMoney(Math.abs(floatBalance))}
+                  {floatBalance >= 0 ? 'Holding ' + fmtMoney(floatBalance) : 'Overspent by ' + fmtMoney(Math.abs(floatBalance))}
                 </span>
               </div>
               <div className="dl-hint" style={{ marginTop: 6 }}>
-                For groceries, courier, laundry and similar errands — give Irham float upfront (cash or e-transfer) so he never pays out of pocket. The balance above updates automatically: total float given minus total spent, so far, across all time. No manual subtraction needed.
+                Give Irham float upfront (cash or e-transfer) so he doesn't need to use his own money for groceries, courier, laundry and similar errands. He logs what he actually spends using the expense form above — this balance is float given this month minus everything he's logged that wasn't ticked "needs reimbursement." Updates automatically, nothing to calculate by hand.
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: isAdmin ? '1fr 1fr' : '1fr', gap: 14, marginTop: 14 }}>
-                <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5B6472', marginBottom: 8 }}>Log a spend</div>
-                  <form className="dl-form" onSubmit={handleAddFloatSpend}>
-                    <div className="dl-field-row">
-                      <div className="dl-field">
-                        <label>Category</label>
-                        <select value={floatSpendForm.category} onChange={e => setFloatSpendForm(f => ({ ...f, category: e.target.value }))}>
-                          <option>Groceries</option>
-                          <option>Courier</option>
-                          <option>Laundry</option>
-                          <option>Other</option>
-                        </select>
-                      </div>
-                      <div className="dl-field"><label>Amount (RM)</label><input type="number" step="0.01" min="0" required placeholder="0.00" value={floatSpendForm.amount} onChange={e => setFloatSpendForm(f => ({ ...f, amount: e.target.value }))} /></div>
+              {isAdmin && (
+                <form className="dl-form" onSubmit={handleAddFloatGiven} style={{ marginTop: 14 }}>
+                  <div className="dl-field-row">
+                    <div className="dl-field">
+                      <label>Method</label>
+                      <select value={floatGiveForm.method} onChange={e => setFloatGiveForm(f => ({ ...f, method: e.target.value }))}>
+                        <option>Cash</option>
+                        <option>Bank Transfer</option>
+                        <option>E-Wallet</option>
+                      </select>
                     </div>
-                    <div className="dl-field"><label>Note</label><input type="text" placeholder="Optional" value={floatSpendForm.note} onChange={e => setFloatSpendForm(f => ({ ...f, note: e.target.value }))} /></div>
-                    <button type="submit" className="dl-btn-primary">Add spend</button>
-                  </form>
-                </div>
-
-                {isAdmin && (
-                  <div>
-                    <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5B6472', marginBottom: 8 }}>Give float to Irham</div>
-                    <form className="dl-form" onSubmit={handleAddFloatGiven}>
-                      <div className="dl-field-row">
-                        <div className="dl-field">
-                          <label>Method</label>
-                          <select value={floatGiveForm.method} onChange={e => setFloatGiveForm(f => ({ ...f, method: e.target.value }))}>
-                            <option>Cash</option>
-                            <option>Bank Transfer</option>
-                            <option>E-Wallet</option>
-                          </select>
-                        </div>
-                        <div className="dl-field"><label>Amount (RM)</label><input type="number" step="0.01" min="0" required placeholder="0.00" value={floatGiveForm.amount} onChange={e => setFloatGiveForm(f => ({ ...f, amount: e.target.value }))} /></div>
-                      </div>
-                      <div className="dl-field"><label>Note</label><input type="text" placeholder="Optional" value={floatGiveForm.note} onChange={e => setFloatGiveForm(f => ({ ...f, note: e.target.value }))} /></div>
-                      <button type="submit" className="dl-btn-primary">Record float given</button>
-                    </form>
+                    <div className="dl-field"><label>Amount (RM)</label><input type="number" step="0.01" min="0" required placeholder="0.00" value={floatGiveForm.amount} onChange={e => setFloatGiveForm(f => ({ ...f, amount: e.target.value }))} /></div>
                   </div>
-                )}
-              </div>
+                  <div className="dl-field-row">
+                    <div className="dl-field">
+                      <label>Category (optional)</label>
+                      <select value={floatGiveForm.category} onChange={e => setFloatGiveForm(f => ({ ...f, category: e.target.value }))}>
+                        <option value="">General / unspecified</option>
+                        <option>Toll</option>
+                        <option>Parking</option>
+                        <option>Maintenance</option>
+                        <option>Groceries</option>
+                        <option>Courier</option>
+                        <option>Laundry</option>
+                        <option>Other</option>
+                      </select>
+                    </div>
+                    <div className="dl-field"><label>Note</label><input type="text" placeholder="Optional" value={floatGiveForm.note} onChange={e => setFloatGiveForm(f => ({ ...f, note: e.target.value }))} /></div>
+                  </div>
+                  <button type="submit" className="dl-btn-primary">Record float given</button>
+                </form>
+              )}
 
               <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed #DBDED9' }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5B6472', marginBottom: 6 }}>Ledger ({floatLedger.length} entries)</div>
-                {floatLedger.length === 0 ? <div className="dl-empty-note">No float or errand spending logged yet.</div> : (
-                  [...floatLedger].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).map(entry => (
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5B6472', marginBottom: 6 }}>This month ({floatEntries.length} entries · {fmtMoney(floatGivenTotal)} given)</div>
+                {floatEntries.length === 0 ? <div className="dl-empty-note">No float given yet this month.</div> : (
+                  [...floatEntries].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).map(entry => (
                     <div className="dl-log-row" key={entry.id}>
                       <div className="dl-log-main">
-                        <div className="t1">{entry.type === 'float' ? 'Float given (' + entry.method + ')' : entry.category}</div>
-                        <div className="t2">{entry.date}{entry.note ? ' · ' + entry.note : ''} · {entry.enteredBy}</div>
+                        <div className="t1">{entry.method}{entry.category ? ' · ' + entry.category : ''}</div>
+                        <div className="t2">{entry.date}{entry.note ? ' · ' + entry.note : ''}</div>
                       </div>
-                      <div className="dl-log-amt" style={{ color: entry.type === 'float' ? '#2F6F63' : '#B4472A' }}>
-                        {entry.type === 'float' ? '+' : '−'}{fmtMoney(entry.amount)}
-                      </div>
+                      <div className="dl-log-amt" style={{ color: '#2F6F63' }}>+{fmtMoney(entry.amount)}</div>
                       {isAdmin && <button className="dl-log-del" onClick={() => handleDeleteFloatEntry(entry.id)} aria-label="Delete entry">&times;</button>}
                     </div>
                   ))
@@ -1607,16 +1634,43 @@ function DriverLog() {
             </div>
 
             <div className="dl-card">
-              <h2>Expenses, trips &amp; leave</h2>
+              <h2>Expenses, float &amp; trips</h2>
               <table className="dl-breakdown-table">
                 <tbody>
                   <tr><td>Total expenses claimed</td><td className="num">{fmtMoney(reportSummary.expTotal)}</td></tr>
+                  <tr><td style={{ paddingLeft: 18, color: '#8B93A0' }}>— paid from float</td><td className="num">{fmtMoney(reportSummary.floatFundedTotal)}</td></tr>
+                  <tr><td style={{ paddingLeft: 18, color: '#8B93A0' }}>— owed to Irham (reimbursement)</td><td className="num">{fmtMoney(reportSummary.reimburseTotal)}</td></tr>
+                  <tr><td>Float given to Irham</td><td className="num">{fmtMoney(reportSummary.floatGivenTotal)}</td></tr>
                   <tr><td>Trips logged</td><td className="num">{reportTrips.length}</td></tr>
                   <tr><td>Total distance</td><td className="num">{Math.round(reportSummary.tripKm * 10) / 10} km</td></tr>
                   <tr><td>Leave days</td><td className="num">{reportSummary.leaveDays}</td></tr>
                   <tr><td>Medical leave days</td><td className="num">{reportSummary.medicalDays}</td></tr>
                 </tbody>
               </table>
+            </div>
+
+            <div className="dl-card">
+              <h2>Expense &amp; float line items</h2>
+              {reportExpenses.length === 0 && reportFloat.length === 0 ? <div className="dl-empty-note">No expenses or float entries this month.</div> : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="dl-breakdown-table">
+                    <thead><tr><th>Date</th><th>Type</th><th>Category / Method</th><th>Note</th><th className="num">Amount</th></tr></thead>
+                    <tbody>
+                      {[...reportExpenses.map(e => ({ ...e, kind: 'expense' })), ...reportFloat.map(e => ({ ...e, kind: 'float' }))]
+                        .sort((a, b) => a.date.localeCompare(b.date))
+                        .map(e => (
+                          <tr key={e.kind + '-' + e.id}>
+                            <td>{e.date}</td>
+                            <td>{e.kind === 'float' ? 'Float given' : (e.reimburse ? 'Expense (reimburse)' : 'Expense')}</td>
+                            <td>{e.kind === 'float' ? e.method + (e.category ? ' · ' + e.category : '') : e.category}</td>
+                            <td>{e.note || ''}</td>
+                            <td className="num">{e.kind === 'float' ? '+' : '−'}{fmtMoney(e.amount)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             <button className="dl-btn-primary" onClick={handleCopyReport}>Copy report as text</button>
