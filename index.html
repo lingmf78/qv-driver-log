@@ -1122,12 +1122,6 @@ function DriverLog() {
   const floatFundedTotal = expenses.filter(e => !e.reimburse).reduce((s, e) => s + e.amount, 0);
   const floatGivenTotal = floatEntries.reduce((s, e) => s + e.amount, 0);
   const floatBalance = floatGivenTotal - floatFundedTotal;
-  const expByCategory = (() => {
-    const totals = {};
-    expenses.forEach(e => { totals[e.category] = (totals[e.category] || 0) + e.amount; });
-    const max = Math.max(1, ...Object.values(totals));
-    return Object.entries(totals).sort((a, b) => b[1] - a[1]).map(([category, amount]) => ({ category, amount, pct: Math.round((amount / max) * 100) }));
-  })();
   const reportSummary = buildReportSummary();
 
   const monthAttendanceForDash = attendanceCache[monthKey] || {};
@@ -1511,27 +1505,8 @@ function DriverLog() {
             </div>
 
             <div className="dl-card">
-              <h2>Spending by category, month to date</h2>
-              {expByCategory.length === 0 ? <div className="dl-empty-note">No expenses logged yet this month.</div> : (
-                <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
-                  {expByCategory.map(row => (
-                    <div key={row.category}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
-                        <span style={{ fontWeight: 600 }}>{row.category}</span>
-                        <span style={{ fontFamily: "'IBM Plex Mono',monospace", color: '#5B6472' }}>{fmtMoney(row.amount)}</span>
-                      </div>
-                      <div style={{ background: '#EDEFEC', borderRadius: 6, height: 10, overflow: 'hidden' }}>
-                        <div style={{ width: row.pct + '%', background: '#E2A73E', height: '100%', borderRadius: 6 }}></div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="dl-card">
               <div className="dl-row-between">
-                <h2 style={{ marginBottom: 0 }}>Expenses this month</h2>
+                <h2 style={{ marginBottom: 0 }}>{isAdmin ? 'Expenses — last 3 days' : 'Expenses this month'}</h2>
                 <span className="dl-badge workday">{fmtMoney(expTotal)}</span>
               </div>
               {reimburseTotal > 0 && (
@@ -1539,29 +1514,39 @@ function DriverLog() {
                   Owed to Irham this month: {fmtMoney(reimburseTotal)} (paid from his own money)
                 </div>
               )}
+              {isAdmin && <div className="dl-hint" style={{ marginTop: 6 }}>Total above is for the full month — the list below shows just the most recent 3 days.</div>}
               <div style={{ marginTop: 8 }}>
-                {expenses.length === 0 && <div className="dl-empty-note">No expenses logged this month.</div>}
-                {[...expenses].sort((a, b) => b.date.localeCompare(a.date)).map((ex, i) => (
-                  <div className="dl-log-row" key={ex.id}>
-                    {ex.photo && (
-                      <img
-                        src={ex.photo}
-                        className="dl-thumb"
-                        onClick={() => { const w = window.open(''); if (w) w.document.write('<img src="' + ex.photo + '" style="max-width:100%;">'); }}
-                        alt="Receipt"
-                      />
-                    )}
-                    <div className="dl-log-idx">{i + 1}</div>
-                    <div className="dl-log-main">
-                      <div className="t1">{ex.category}{ex.reimburse && <span className="dl-badge flag" style={{ marginLeft: 6 }}>Reimburse</span>}</div>
-                      <div className="t2">{ex.date}{ex.note ? ' · ' + ex.note : ''}</div>
+                {(() => {
+                  let visibleExpenses = expenses;
+                  if (isAdmin) {
+                    const cutoff = new Date(today);
+                    cutoff.setDate(cutoff.getDate() - 2);
+                    const cutoffStr = toDateStr(cutoff);
+                    visibleExpenses = expenses.filter(ex => ex.date >= cutoffStr);
+                  }
+                  if (visibleExpenses.length === 0) return <div className="dl-empty-note">{isAdmin ? 'No expenses in the last 3 days.' : 'No expenses logged this month.'}</div>;
+                  return [...visibleExpenses].sort((a, b) => b.date.localeCompare(a.date)).map((ex, i) => (
+                    <div className="dl-log-row" key={ex.id}>
+                      {ex.photo && (
+                        <img
+                          src={ex.photo}
+                          className="dl-thumb"
+                          onClick={() => { const w = window.open(''); if (w) w.document.write('<img src="' + ex.photo + '" style="max-width:100%;">'); }}
+                          alt="Receipt"
+                        />
+                      )}
+                      <div className="dl-log-idx">{i + 1}</div>
+                      <div className="dl-log-main">
+                        <div className="t1">{ex.category}{ex.reimburse && <span className="dl-badge flag" style={{ marginLeft: 6 }}>Reimburse</span>}</div>
+                        <div className="t2">{ex.date}{ex.note ? ' · ' + ex.note : ''}</div>
+                      </div>
+                      <div className="dl-log-amt">{fmtMoney(ex.amount)}</div>
+                      {(isAdmin || ex.date === dateStr) && (
+                        <button className="dl-log-del" onClick={() => handleDeleteExpense(ex.id)} aria-label="Delete expense">&times;</button>
+                      )}
                     </div>
-                    <div className="dl-log-amt">{fmtMoney(ex.amount)}</div>
-                    {(isAdmin || ex.date === dateStr) && (
-                      <button className="dl-log-del" onClick={() => handleDeleteExpense(ex.id)} aria-label="Delete expense">&times;</button>
-                    )}
-                  </div>
-                ))}
+                  ));
+                })()}
               </div>
             </div>
 
@@ -1572,9 +1557,11 @@ function DriverLog() {
                   {floatBalance >= 0 ? 'Holding ' + fmtMoney(floatBalance) : 'Overspent by ' + fmtMoney(Math.abs(floatBalance))}
                 </span>
               </div>
-              <div className="dl-hint" style={{ marginTop: 6 }}>
-                Give Irham float upfront (cash or e-transfer) so he doesn't need to use his own money for groceries, courier, laundry and similar errands. He logs what he actually spends using the expense form above — this balance is float given this month minus everything he's logged that wasn't ticked "needs reimbursement." Updates automatically, nothing to calculate by hand.
-              </div>
+              {isAdmin && (
+                <div className="dl-hint" style={{ marginTop: 6 }}>
+                  Give Irham float upfront (cash or e-transfer) so he doesn't need to use his own money for groceries, courier, laundry and similar errands. He logs what he actually spends using the expense form above — this balance is float given this month minus everything he's logged that wasn't ticked "needs reimbursement." Updates automatically, nothing to calculate by hand.
+                </div>
+              )}
 
               {isAdmin && (
                 <form className="dl-form" onSubmit={handleAddFloatGiven} style={{ marginTop: 14 }}>
