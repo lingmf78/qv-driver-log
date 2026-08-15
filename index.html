@@ -506,6 +506,11 @@ function DriverLog() {
   const [trips, setTrips] = useState([]);
   const [tripForm, setTripForm] = useState({ date: toDateStr(today), time: '', purpose: '', km: '' });
 
+  // Admin keeps a separate trip log — used to cross-check against Irham's
+  // own entries when running reports, not part of his OT/pay calculations.
+  const [adminTrips, setAdminTrips] = useState([]);
+  const [adminTripForm, setAdminTripForm] = useState({ date: toDateStr(today), time: '', from: '', to: '', remarks: '' });
+
   const [reportMonthDate, setReportMonthDate] = useState(todayInKL());
   const [reportAttendance, setReportAttendance] = useState({});
   const [reportTrips, setReportTrips] = useState([]);
@@ -562,6 +567,8 @@ function DriverLog() {
       await refreshRecentDays(merged);
       const tr = await loadMonthArray('trips', monthKey);
       setTrips(tr);
+      const adt = await loadMonthArray('admin_trips', monthKey);
+      setAdminTrips(adt);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -642,6 +649,30 @@ function DriverLog() {
     const nextArr = arr.filter(t => t.id !== id);
     await saveMonthArray('trips', monthKey, nextArr);
     setTrips(nextArr);
+  }
+
+  // ---------- admin's own trip records (separate from Irham's log) ----------
+  async function handleAdminTripSubmit(e) {
+    e.preventDefault();
+    if (!isAdmin) return;
+    const mk = monthKeyFromDateStr(adminTripForm.date);
+    const rec = {
+      id: genId(), date: adminTripForm.date, time: adminTripForm.time,
+      from: adminTripForm.from, to: adminTripForm.to, remarks: adminTripForm.remarks,
+      enteredBy: 'Admin'
+    };
+    const arr = await loadMonthArray('admin_trips', mk);
+    const nextArr = [...arr, rec];
+    await saveMonthArray('admin_trips', mk, nextArr);
+    if (mk === monthKey) setAdminTrips(nextArr);
+    setAdminTripForm({ date: toDateStr(today), time: '', from: '', to: '', remarks: '' });
+  }
+  async function handleDeleteAdminTrip(id) {
+    if (!isAdmin) return;
+    const arr = await loadMonthArray('admin_trips', monthKey);
+    const nextArr = arr.filter(t => t.id !== id);
+    await saveMonthArray('admin_trips', monthKey, nextArr);
+    setAdminTrips(nextArr);
   }
 
   // ---------- reports & dashboard summaries ----------
@@ -1188,13 +1219,51 @@ function DriverLog() {
           </section>
         )}
 
-        {activeTab === 'trips' && (
+        {activeTab === 'trips' && isAdmin && (
+          <section>
+            <div className="dl-card">
+              <h2>Admin trip records</h2>
+              <div className="dl-hint" style={{ marginBottom: 12 }}>
+                Your own record of trips — kept separately from Irham's log — used to cross-check his entries later when running reports.
+              </div>
+              <form className="dl-form" onSubmit={handleAdminTripSubmit}>
+                <div className="dl-field-row">
+                  <div className="dl-field"><label>Date</label><input type="date" required value={adminTripForm.date} onChange={e => setAdminTripForm(f => ({ ...f, date: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Time</label><input type="time" value={adminTripForm.time} onChange={e => setAdminTripForm(f => ({ ...f, time: e.target.value }))} /></div>
+                </div>
+                <div className="dl-field-row">
+                  <div className="dl-field"><label>From</label><input type="text" placeholder="Pickup point" value={adminTripForm.from} onChange={e => setAdminTripForm(f => ({ ...f, from: e.target.value }))} /></div>
+                  <div className="dl-field"><label>To</label><input type="text" placeholder="Destination" value={adminTripForm.to} onChange={e => setAdminTripForm(f => ({ ...f, to: e.target.value }))} /></div>
+                </div>
+                <div className="dl-field"><label>Remarks</label><input type="text" placeholder="Optional" value={adminTripForm.remarks} onChange={e => setAdminTripForm(f => ({ ...f, remarks: e.target.value }))} /></div>
+                <button type="submit" className="dl-btn-primary">Add record</button>
+              </form>
+            </div>
+            <div className="dl-card">
+              <h2>Records this month ({adminTrips.length})</h2>
+              {adminTrips.length === 0 ? <div className="dl-empty-note">No records logged yet.</div> : (
+                [...adminTrips].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''))).map((t, i) => (
+                  <div className="dl-log-row" key={t.id}>
+                    <div className="dl-log-idx">{i + 1}</div>
+                    <div className="dl-log-main">
+                      <div className="t1">{t.from || '—'}{t.to ? ' → ' + t.to : ''}</div>
+                      <div className="t2">{t.date}{t.time ? ' · ' + t.time : ''}{t.remarks ? ' · ' + t.remarks : ''}</div>
+                    </div>
+                    <button className="dl-log-del" onClick={() => handleDeleteAdminTrip(t.id)} aria-label="Delete record">&times;</button>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'trips' && !isAdmin && (
           <section>
             <div className="dl-card">
               <h2>Log a trip (OT only)</h2>
               <form className="dl-form" onSubmit={handleTripSubmit}>
                 <div className="dl-field-row">
-                  <div className="dl-field"><label>Date{!isAdmin ? ' (today only)' : ''}</label><input type="date" required value={tripForm.date} min={!isAdmin ? dateStr : undefined} max={!isAdmin ? dateStr : undefined} onChange={e => setTripForm(f => ({ ...f, date: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Date (today only)</label><input type="date" required value={tripForm.date} min={dateStr} max={dateStr} onChange={e => setTripForm(f => ({ ...f, date: e.target.value }))} /></div>
                   <div className="dl-field"><label>Time</label><input type="time" value={tripForm.time} onChange={e => setTripForm(f => ({ ...f, time: e.target.value }))} /></div>
                 </div>
                 <div className="dl-field-row">
@@ -1215,7 +1284,7 @@ function DriverLog() {
                     <div className="t2">{t.date}{t.time ? ' · ' + t.time : ''}</div>
                   </div>
                   <div className="dl-log-amt">{t.km ? t.km + ' km' : ''}</div>
-                  {(isAdmin || t.date === dateStr) && (
+                  {t.date === dateStr && (
                     <button className="dl-log-del" onClick={() => handleDeleteTrip(t.id)} aria-label="Delete trip">&times;</button>
                   )}
                 </div>
