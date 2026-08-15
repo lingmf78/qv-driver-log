@@ -504,7 +504,7 @@ function DriverLog() {
   const [recentDays, setRecentDays] = useState([]);
 
   const [trips, setTrips] = useState([]);
-  const [tripForm, setTripForm] = useState({ date: toDateStr(today), time: '', purpose: '', km: '' });
+  const [tripForm, setTripForm] = useState({ date: toDateStr(today), notes: '' });
 
   // Admin keeps a separate trip log — used to cross-check against Irham's
   // own entries when running reports, not part of his OT/pay calculations.
@@ -631,16 +631,16 @@ function DriverLog() {
     const trip = {
       id: genId(),
       date: tripForm.date,
-      time: tripForm.time,
-      purpose: tripForm.purpose,
-      km: parseFloat(tripForm.km) || 0,
+      timeIn: todayEntry.checkIn || '',
+      timeOut: todayEntry.checkOut || '',
+      notes: tripForm.notes,
       enteredBy: CURRENT_USER
     };
     const arr = await loadMonthArray('trips', mk);
     const nextArr = [...arr, trip];
     await saveMonthArray('trips', mk, nextArr);
     if (mk === monthKey) setTrips(nextArr);
-    setTripForm({ date: toDateStr(today), time: '', purpose: '', km: '' });
+    setTripForm({ date: toDateStr(today), notes: '' });
   }
   async function handleDeleteTrip(id) {
     const arr = await loadMonthArray('trips', monthKey);
@@ -711,8 +711,7 @@ function DriverLog() {
       dailyRows.push({ dateStr: ds, entry, calc });
     });
     const totalOtPay = workdayOtPay + restOtPay + phOtPay;
-    const tripKm = tripsArr.reduce((s, t) => s + (t.km || 0), 0);
-    return { workedDays, totalHours, workdayOtPay, restOtPay, phOtPay, totalOtPay, leaveDays, medicalDays, dailyRows, tripKm };
+    return { workedDays, totalHours, workdayOtPay, restOtPay, phOtPay, totalOtPay, leaveDays, medicalDays, dailyRows };
   }
   function buildReportSummary() {
     return buildSummaryFor(reportAttendance, reportTrips);
@@ -734,7 +733,7 @@ function DriverLog() {
     lines.push('Public holiday pay: ' + fmtMoney(summary.phOtPay));
     lines.push('Estimated total pay: ' + (settings.monthlySalary ? fmtMoney(baseSalary + summary.totalOtPay) : 'set salary first'));
     lines.push('');
-    lines.push('Trips logged: ' + reportTrips.length + ' (' + (Math.round(summary.tripKm * 10) / 10) + ' km)');
+    lines.push('Trips logged: ' + reportTrips.length);
     lines.push('');
     lines.push('Daily breakdown:');
     summary.dailyRows.forEach(r => {
@@ -823,13 +822,13 @@ function DriverLog() {
 
     rows.push([]);
     rows.push(["IRHAM'S TRIPS"]);
-    rows.push(['Date', 'Time', 'Purpose', 'Distance (km)']);
+    rows.push(['Date', 'Time in', 'Time out', 'Notes']);
     Object.keys(tripsByMonth).sort().forEach(mk => {
       tripsByMonth[mk]
         .filter(t => t.date >= exportFrom && t.date <= exportTo)
-        .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))
+        .sort((a, b) => a.date.localeCompare(b.date))
         .forEach(t => {
-          rows.push([t.date, t.time || '', t.purpose || '', t.km || '']);
+          rows.push([t.date, t.timeIn || '', t.timeOut || '', t.notes || '']);
         });
     });
 
@@ -1070,7 +1069,7 @@ function DriverLog() {
                   <tr><td>Workday OT</td><td className="num">{fmtMoney(dashSummary.workdayOtPay)}</td></tr>
                   <tr><td>Rest day pay</td><td className="num">{fmtMoney(dashSummary.restOtPay)}</td></tr>
                   <tr><td>Public holiday pay</td><td className="num">{fmtMoney(dashSummary.phOtPay)}</td></tr>
-                  <tr><td>Trips logged</td><td className="num">{trips.length} ({Math.round(dashSummary.tripKm * 10) / 10} km)</td></tr>
+                  <tr><td>Trips logged</td><td className="num">{trips.length}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1293,29 +1292,28 @@ function DriverLog() {
           <section>
             <div className="dl-card">
               <h2>Log a trip (OT only)</h2>
+              <div className="dl-hint" style={{ marginBottom: 12 }}>
+                Time in and time out are taken automatically from today's check-in/check-out on the Today tab — just add a note if there's anything worth flagging for OT.
+              </div>
               <form className="dl-form" onSubmit={handleTripSubmit}>
                 <div className="dl-field-row">
-                  <div className="dl-field"><label>Date (today only)</label><input type="date" required value={tripForm.date} min={dateStr} max={dateStr} onChange={e => setTripForm(f => ({ ...f, date: e.target.value }))} /></div>
-                  <div className="dl-field"><label>Time</label><input type="time" value={tripForm.time} onChange={e => setTripForm(f => ({ ...f, time: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Time in</label><input type="text" disabled value={todayEntry.checkIn || 'Not checked in yet'} /></div>
+                  <div className="dl-field"><label>Time out</label><input type="text" disabled value={todayEntry.checkOut || 'Not checked out yet'} /></div>
                 </div>
-                <div className="dl-field-row">
-                  <div className="dl-field"><label>Purpose</label><input type="text" placeholder="e.g. Airport run" value={tripForm.purpose} onChange={e => setTripForm(f => ({ ...f, purpose: e.target.value }))} /></div>
-                  <div className="dl-field"><label>Distance (km, optional)</label><input type="number" step="0.1" min="0" placeholder="0" value={tripForm.km} onChange={e => setTripForm(f => ({ ...f, km: e.target.value }))} /></div>
-                </div>
+                <div className="dl-field"><label>Notes</label><input type="text" placeholder="Optional — e.g. reason for OT" value={tripForm.notes} onChange={e => setTripForm(f => ({ ...f, notes: e.target.value }))} /></div>
                 <button type="submit" className="dl-btn-primary">Add trip</button>
               </form>
             </div>
             <div className="dl-card">
               <h2>Trips this month</h2>
               {trips.length === 0 && <div className="dl-empty-note">No trips logged this month.</div>}
-              {[...trips].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''))).map((t, i) => (
+              {[...trips].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).map((t, i) => (
                 <div className="dl-log-row" key={t.id}>
                   <div className="dl-log-idx">{i + 1}</div>
                   <div className="dl-log-main">
-                    <div className="t1">{t.purpose || 'Trip'}</div>
-                    <div className="t2">{t.date}{t.time ? ' · ' + t.time : ''}</div>
+                    <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
+                    <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}</div>
                   </div>
-                  <div className="dl-log-amt">{t.km ? t.km + ' km' : ''}</div>
                   {t.date === dateStr && (
                     <button className="dl-log-del" onClick={() => handleDeleteTrip(t.id)} aria-label="Delete trip">&times;</button>
                   )}
@@ -1358,7 +1356,6 @@ function DriverLog() {
               <table className="dl-breakdown-table">
                 <tbody>
                   <tr><td>Trips logged</td><td className="num">{reportTrips.length}</td></tr>
-                  <tr><td>Total distance</td><td className="num">{Math.round(reportSummary.tripKm * 10) / 10} km</td></tr>
                   <tr><td>Leave days</td><td className="num">{reportSummary.leaveDays}</td></tr>
                   <tr><td>Medical leave days</td><td className="num">{reportSummary.medicalDays}</td></tr>
                 </tbody>
