@@ -509,7 +509,7 @@ function DriverLog() {
   // Admin keeps a separate trip log — used to cross-check against Irham's
   // own entries when running reports, not part of his OT/pay calculations.
   const [adminTrips, setAdminTrips] = useState([]);
-  const [adminTripForm, setAdminTripForm] = useState({ date: toDateStr(today), time: '', from: '', to: '', remarks: '' });
+  const [adminTripForm, setAdminTripForm] = useState({ date: toDateStr(today), timeIn: '', timeOut: '', notes: '' });
 
   const [reportMonthDate, setReportMonthDate] = useState(todayInKL());
   const [reportAttendance, setReportAttendance] = useState({});
@@ -657,15 +657,15 @@ function DriverLog() {
     if (!isAdmin) return;
     const mk = monthKeyFromDateStr(adminTripForm.date);
     const rec = {
-      id: genId(), date: adminTripForm.date, time: adminTripForm.time,
-      from: adminTripForm.from, to: adminTripForm.to, remarks: adminTripForm.remarks,
+      id: genId(), date: adminTripForm.date, timeIn: adminTripForm.timeIn,
+      timeOut: adminTripForm.timeOut, notes: adminTripForm.notes,
       enteredBy: 'Admin'
     };
     const arr = await loadMonthArray('admin_trips', mk);
     const nextArr = [...arr, rec];
     await saveMonthArray('admin_trips', mk, nextArr);
     if (mk === monthKey) setAdminTrips(nextArr);
-    setAdminTripForm({ date: toDateStr(today), time: '', from: '', to: '', remarks: '' });
+    setAdminTripForm({ date: toDateStr(today), timeIn: '', timeOut: '', notes: '' });
   }
   async function handleDeleteAdminTrip(id) {
     if (!isAdmin) return;
@@ -1229,29 +1229,33 @@ function DriverLog() {
               <form className="dl-form" onSubmit={handleAdminTripSubmit}>
                 <div className="dl-field-row">
                   <div className="dl-field"><label>Date</label><input type="date" required value={adminTripForm.date} onChange={e => setAdminTripForm(f => ({ ...f, date: e.target.value }))} /></div>
-                  <div className="dl-field"><label>Time</label><input type="time" value={adminTripForm.time} onChange={e => setAdminTripForm(f => ({ ...f, time: e.target.value }))} /></div>
                 </div>
                 <div className="dl-field-row">
-                  <div className="dl-field"><label>From</label><input type="text" placeholder="Pickup point" value={adminTripForm.from} onChange={e => setAdminTripForm(f => ({ ...f, from: e.target.value }))} /></div>
-                  <div className="dl-field"><label>To</label><input type="text" placeholder="Destination" value={adminTripForm.to} onChange={e => setAdminTripForm(f => ({ ...f, to: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Time in</label><input type="time" value={adminTripForm.timeIn} onChange={e => setAdminTripForm(f => ({ ...f, timeIn: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Time out</label><input type="time" value={adminTripForm.timeOut} onChange={e => setAdminTripForm(f => ({ ...f, timeOut: e.target.value }))} /></div>
                 </div>
-                <div className="dl-field"><label>Remarks</label><input type="text" placeholder="Optional" value={adminTripForm.remarks} onChange={e => setAdminTripForm(f => ({ ...f, remarks: e.target.value }))} /></div>
+                <div className="dl-field"><label>Notes</label><input type="text" placeholder="Optional" value={adminTripForm.notes} onChange={e => setAdminTripForm(f => ({ ...f, notes: e.target.value }))} /></div>
                 <button type="submit" className="dl-btn-primary">Add record</button>
               </form>
             </div>
             <div className="dl-card">
-              <h2>Records this month ({adminTrips.length})</h2>
+              <h2>Records this month</h2>
               {adminTrips.length === 0 ? <div className="dl-empty-note">No records logged yet.</div> : (
-                [...adminTrips].sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''))).map((t, i) => (
-                  <div className="dl-log-row" key={t.id}>
-                    <div className="dl-log-idx">{i + 1}</div>
-                    <div className="dl-log-main">
-                      <div className="t1">{t.from || '—'}{t.to ? ' → ' + t.to : ''}</div>
-                      <div className="t2">{t.date}{t.time ? ' · ' + t.time : ''}{t.remarks ? ' · ' + t.remarks : ''}</div>
+                <>
+                  {[...adminTrips].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 7).map((t, i) => (
+                    <div className="dl-log-row" key={t.id}>
+                      <div className="dl-log-idx">{i + 1}</div>
+                      <div className="dl-log-main">
+                        <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
+                        <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}</div>
+                      </div>
+                      <button className="dl-log-del" onClick={() => handleDeleteAdminTrip(t.id)} aria-label="Delete record">&times;</button>
                     </div>
-                    <button className="dl-log-del" onClick={() => handleDeleteAdminTrip(t.id)} aria-label="Delete record">&times;</button>
-                  </div>
-                ))
+                  ))}
+                  {adminTrips.length > 7 && (
+                    <div className="dl-hint">Showing the 7 most recent of {adminTrips.length} records this month.</div>
+                  )}
+                </>
               )}
             </div>
           </section>
