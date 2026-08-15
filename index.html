@@ -768,8 +768,12 @@ function DriverLog() {
     while (cur <= toD) { monthKeys.add(toMonthKey(cur)); cur.setMonth(cur.getMonth() + 1); }
 
     const attByMonth = {};
+    const tripsByMonth = {};
+    const adminTripsByMonth = {};
     for (const mk of monthKeys) {
       attByMonth[mk] = await loadAttendanceMonth(mk);
+      tripsByMonth[mk] = await loadMonthArray('trips', mk);
+      adminTripsByMonth[mk] = await loadMonthArray('admin_trips', mk);
     }
 
     const rows = [];
@@ -816,6 +820,30 @@ function DriverLog() {
         entry.remark || ''
       ]);
     }
+
+    rows.push([]);
+    rows.push(["IRHAM'S TRIPS"]);
+    rows.push(['Date', 'Time', 'Purpose', 'Distance (km)']);
+    Object.keys(tripsByMonth).sort().forEach(mk => {
+      tripsByMonth[mk]
+        .filter(t => t.date >= exportFrom && t.date <= exportTo)
+        .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')))
+        .forEach(t => {
+          rows.push([t.date, t.time || '', t.purpose || '', t.km || '']);
+        });
+    });
+
+    rows.push([]);
+    rows.push(['ADMIN TRIP RECORDS']);
+    rows.push(['Date', 'Time in', 'Time out', 'Notes']);
+    Object.keys(adminTripsByMonth).sort().forEach(mk => {
+      adminTripsByMonth[mk]
+        .filter(t => t.date >= exportFrom && t.date <= exportTo)
+        .sort((a, b) => (a.date + (a.timeIn || '')).localeCompare(b.date + (b.timeIn || '')))
+        .forEach(t => {
+          rows.push([t.date, t.timeIn || '', t.timeOut || '', t.notes || '']);
+        });
+    });
 
     const csvContent = rows.map(r => r.map(csvEscape).join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
