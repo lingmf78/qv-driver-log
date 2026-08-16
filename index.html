@@ -203,13 +203,13 @@ function computeDay(dateStr, entry, settings) {
     if (worked <= 4) { base = 0.5 * dr; }
     else { base = 1 * dr; }
     const beyondPay = beyondH * hr * 2;
-    otHours = beyondH;
+    otHours = worked; // whole day is off-duty, so every hour worked counts as OT hours
     otPay = base + beyondPay;
     note = worked <= 4 ? 'Half day rest-day pay' : (beyondH > 0 ? 'Full day + ' + fmtHrs(beyondH) + 'h @2x (after ' + settings.standardEnd + ')' : 'Full day rest-day pay');
   } else {
     let base = worked > 0 ? 2 * dr : 0;
     const beyondPay = beyondH * hr * 3;
-    otHours = beyondH;
+    otHours = worked; // whole day is off-duty, so every hour worked counts as OT hours
     otPay = base + beyondPay;
     note = worked > 0 ? (beyondH > 0 ? '2 days + ' + fmtHrs(beyondH) + 'h @3x (after ' + settings.standardEnd + ')' : "2 days' holiday pay") : '';
   }
