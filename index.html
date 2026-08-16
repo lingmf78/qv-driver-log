@@ -822,25 +822,27 @@ function DriverLog() {
 
     rows.push([]);
     rows.push(["IRHAM'S TRIPS"]);
-    rows.push(['Date', 'Time in', 'Time out', 'Notes']);
+    rows.push(['Date', 'Day', 'Time in', 'Time out', 'Notes']);
     Object.keys(tripsByMonth).sort().forEach(mk => {
       tripsByMonth[mk]
         .filter(t => t.date >= exportFrom && t.date <= exportTo)
         .sort((a, b) => a.date.localeCompare(b.date))
         .forEach(t => {
-          rows.push([t.date, t.timeIn || '', t.timeOut || '', t.notes || '']);
+          const dayLabel = new Date(t.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' });
+          rows.push([t.date, dayLabel, t.timeIn || '', t.timeOut || '', t.notes || '']);
         });
     });
 
     rows.push([]);
     rows.push(['ADMIN TRIP RECORDS']);
-    rows.push(['Date', 'Time in', 'Time out', 'Notes']);
+    rows.push(['Date', 'Day', 'Time in', 'Time out', 'Notes']);
     Object.keys(adminTripsByMonth).sort().forEach(mk => {
       adminTripsByMonth[mk]
         .filter(t => t.date >= exportFrom && t.date <= exportTo)
         .sort((a, b) => (a.date + (a.timeIn || '')).localeCompare(b.date + (b.timeIn || '')))
         .forEach(t => {
-          rows.push([t.date, t.timeIn || '', t.timeOut || '', t.notes || '']);
+          const dayLabel = new Date(t.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' });
+          rows.push([t.date, dayLabel, t.timeIn || '', t.timeOut || '', t.notes || '']);
         });
     });
 
