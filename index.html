@@ -189,9 +189,17 @@ function computeDay(dateStr, entry, settings) {
   const hr = hourlyRate(settings);
   const dr = dayRate(settings);
   // Irham's normal working hours are fixed at standardStart–standardEnd
-  // (default 9:00am–6:00pm) on every day type. OT is triggered purely by
-  // clock time — staying past standardEnd — not by total hours worked.
+  // (default 9:00am–6:00pm). For workdays, OT is triggered by staying past
+  // standardEnd (his shift always starts around 9am, so this is equivalent
+  // to working beyond the normal daily quota). For rest days and public
+  // holidays, Section 60(3)/60D of the Employment Act instead bases the
+  // premium rate purely on whether TOTAL HOURS WORKED exceed the normal
+  // daily quota — regardless of what clock time those hours fall in. A
+  // shift entirely outside 9–6 (e.g. an evening-only public holiday call-out)
+  // that doesn't exceed the normal daily hours gets no 3x premium at all.
+  const normalHours = paidHoursPerDay(settings);
   const beyondH = hoursPastCutoff(entry.checkIn, entry.checkOut, settings.standardEnd);
+  const excessH = Math.max(0, worked - normalHours);
   let otPay = 0, otHours = 0, note = '';
 
   if (dayType === 'workday') {
@@ -202,16 +210,16 @@ function computeDay(dateStr, entry, settings) {
     let base = 0;
     if (worked <= 4) { base = 0.5 * dr; }
     else { base = 1 * dr; }
-    const beyondPay = beyondH * hr * 2;
+    const excessPay = excessH * hr * 2;
     otHours = worked; // whole day is off-duty, so every hour worked counts as OT hours
-    otPay = base + beyondPay;
-    note = worked <= 4 ? 'Half day rest-day pay' : (beyondH > 0 ? 'Full day + ' + fmtHrs(beyondH) + 'h @2x (after ' + settings.standardEnd + ')' : 'Full day rest-day pay');
+    otPay = base + excessPay;
+    note = worked <= 4 ? 'Half day rest-day pay' : (excessH > 0 ? 'Full day + ' + fmtHrs(excessH) + 'h @2x (beyond ' + fmtHrs(normalHours) + 'h normal hours)' : 'Full day rest-day pay');
   } else {
     let base = worked > 0 ? 2 * dr : 0;
-    const beyondPay = beyondH * hr * 3;
+    const excessPay = excessH * hr * 3;
     otHours = worked; // whole day is off-duty, so every hour worked counts as OT hours
-    otPay = base + beyondPay;
-    note = worked > 0 ? (beyondH > 0 ? '2 days + ' + fmtHrs(beyondH) + 'h @3x (after ' + settings.standardEnd + ')' : "2 days' holiday pay") : '';
+    otPay = base + excessPay;
+    note = worked > 0 ? (excessH > 0 ? '2 days + ' + fmtHrs(excessH) + 'h @3x (beyond ' + fmtHrs(normalHours) + 'h normal hours)' : "2 days' holiday pay") : '';
   }
   return { dayType, worked, otHours, otPay, note, status: 'present' };
 }
@@ -1424,10 +1432,10 @@ function DriverLog() {
             <div className="dl-card">
               <h2>How OT is calculated</h2>
               <div className="dl-hint">
-                Irham's normal working hours are fixed at <strong>{settingsDraft.standardStart}–{settingsDraft.standardEnd}</strong> on every day type. Hours worked are counted from his actual check-in time, but overtime is only triggered by staying past <strong>{settingsDraft.standardEnd}</strong> — not simply by totalling up hours worked.<br /><br />
+                Irham's normal working hours are fixed at <strong>{settingsDraft.standardStart}–{settingsDraft.standardEnd}</strong> ({fmtHrs(paidHoursPerDay(settingsDraft))} hours/day after the unpaid break).<br /><br />
                 <strong>Workday</strong> — hours worked after {settingsDraft.standardEnd} are paid at 1.5× the hourly rate.<br /><br />
-                <strong>Rest day (Sat/Sun)</strong> — up to 4 hours worked pays 0.5 day's wage; more than 4 hours pays 1 day's wage; any hours worked after {settingsDraft.standardEnd} are paid separately at 2× the hourly rate.<br /><br />
-                <strong>Public holiday</strong> — work within the {settingsDraft.standardStart}–{settingsDraft.standardEnd} window pays 2 days' wages; hours worked after {settingsDraft.standardEnd} are paid at 3× the hourly rate.
+                <strong>Rest day</strong> — up to 4 hours worked pays 0.5 day's wage; more than 4 hours pays 1 day's wage. Any hours worked <em>in total</em> beyond the normal daily quota are paid separately at 2× the hourly rate — based on total hours worked, not what time of day they fall. A short shift entirely outside {settingsDraft.standardStart}–{settingsDraft.standardEnd} that doesn't exceed the daily quota gets no premium, per s.60(3) of the Employment Act.<br /><br />
+                <strong>Public holiday</strong> — any work pays 2 days' wages flat, as long as total hours worked don't exceed the normal daily quota — again based on total hours, not clock time. Only hours worked <em>in total</em> beyond that quota are paid separately at 3× the hourly rate, per s.60D of the Employment Act.
               </div>
             </div>
           </section>
