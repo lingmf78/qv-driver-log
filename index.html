@@ -1324,7 +1324,7 @@ function DriverLog() {
               <h2>Records this month</h2>
               {adminTrips.length === 0 ? <div className="dl-empty-note">No records logged yet.</div> : (
                 <>
-                  {[...adminTrips].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 7).map((t, i) => (
+                  {[...adminTrips].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 3).map((t, i) => (
                     <div className="dl-log-row" key={t.id}>
                       <div className="dl-log-idx">{i + 1}</div>
                       <div className="dl-log-main">
@@ -1334,8 +1334,8 @@ function DriverLog() {
                       <button className="dl-log-del" onClick={() => handleDeleteAdminTrip(t.id)} aria-label="Delete record">&times;</button>
                     </div>
                   ))}
-                  {adminTrips.length > 7 && (
-                    <div className="dl-hint">Showing the 7 most recent of {adminTrips.length} records this month.</div>
+                  {adminTrips.length > 3 && (
+                    <div className="dl-hint">Showing the 3 most recent of {adminTrips.length} records this month.</div>
                   )}
                 </>
               )}
@@ -1363,15 +1363,20 @@ function DriverLog() {
                   {new Date(backfillTripDate + 'T00:00:00').toLocaleDateString('en-MY', { month: 'long', year: 'numeric' })} — Irham's trips so far
                 </div>
                 {backfillTripMonthList.length === 0 ? <div className="dl-empty-note">No trips logged for this month yet.</div> : (
-                  [...backfillTripMonthList].sort((a, b) => a.date.localeCompare(b.date)).map(t => (
-                    <div className="dl-log-row" key={t.id}>
-                      <div className="dl-log-main">
-                        <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
-                        <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}{t.enteredBy ? ' · ' + t.enteredBy : ''}</div>
+                  <>
+                    {[...backfillTripMonthList].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 3).map(t => (
+                      <div className="dl-log-row" key={t.id}>
+                        <div className="dl-log-main">
+                          <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
+                          <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}{t.enteredBy ? ' · ' + t.enteredBy : ''}</div>
+                        </div>
+                        <button className="dl-log-del" onClick={() => handleDeleteBackfillTrip(t.id)} aria-label="Delete trip">&times;</button>
                       </div>
-                      <button className="dl-log-del" onClick={() => handleDeleteBackfillTrip(t.id)} aria-label="Delete trip">&times;</button>
-                    </div>
-                  ))
+                    ))}
+                    {backfillTripMonthList.length > 3 && (
+                      <div className="dl-hint">Showing the 3 most recent of {backfillTripMonthList.length} trips this month.</div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
