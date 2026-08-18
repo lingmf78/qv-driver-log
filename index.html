@@ -519,6 +519,12 @@ function DriverLog() {
   const [adminTrips, setAdminTrips] = useState([]);
   const [adminTripForm, setAdminTripForm] = useState({ date: toDateStr(today), timeIn: '', timeOut: '', notes: '' });
 
+  // Backfilling Irham's OWN trip log (past months) — separate from admin's
+  // own cross-check records above.
+  const [backfillTripDate, setBackfillTripDate] = useState(toDateStr(today));
+  const [backfillTripForm, setBackfillTripForm] = useState({ timeIn: '', timeOut: '', notes: '' });
+  const [backfillTripMonthList, setBackfillTripMonthList] = useState([]);
+
   const [reportMonthDate, setReportMonthDate] = useState(todayInKL());
   const [reportAttendance, setReportAttendance] = useState({});
   const [reportTrips, setReportTrips] = useState([]);
@@ -681,6 +687,44 @@ function DriverLog() {
     const nextArr = arr.filter(t => t.id !== id);
     await saveMonthArray('admin_trips', monthKey, nextArr);
     setAdminTrips(nextArr);
+  }
+
+  // ---------- backfill Irham's own trip log (any past date) ----------
+  async function loadBackfillTripMonth(ds) {
+    const mk = monthKeyFromDateStr(ds);
+    const arr = await loadMonthArray('trips', mk);
+    setBackfillTripMonthList(arr);
+  }
+  useEffect(() => {
+    if (!isAdmin) return;
+    loadBackfillTripMonth(backfillTripDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backfillTripDate, isAdmin]);
+
+  async function handleBackfillTripSubmit(e) {
+    e.preventDefault();
+    if (!isAdmin) return;
+    const mk = monthKeyFromDateStr(backfillTripDate);
+    const trip = {
+      id: genId(), date: backfillTripDate,
+      timeIn: backfillTripForm.timeIn, timeOut: backfillTripForm.timeOut,
+      notes: backfillTripForm.notes, enteredBy: 'Admin (backfill)'
+    };
+    const arr = await loadMonthArray('trips', mk);
+    const nextArr = [...arr, trip];
+    await saveMonthArray('trips', mk, nextArr);
+    if (mk === monthKey) setTrips(nextArr);
+    setBackfillTripMonthList(nextArr);
+    setBackfillTripForm({ timeIn: '', timeOut: '', notes: '' });
+  }
+  async function handleDeleteBackfillTrip(id) {
+    if (!isAdmin) return;
+    const mk = monthKeyFromDateStr(backfillTripDate);
+    const arr = await loadMonthArray('trips', mk);
+    const nextArr = arr.filter(t => t.id !== id);
+    await saveMonthArray('trips', mk, nextArr);
+    if (mk === monthKey) setTrips(nextArr);
+    setBackfillTripMonthList(nextArr);
   }
 
   // ---------- reports & dashboard summaries ----------
@@ -1019,6 +1063,7 @@ function DriverLog() {
             </span>
             <div className="dl-role-row">
               <span className="dl-role-tag">{isAdmin ? 'Administrator' : 'Irham · Driver'}</span>
+              <button className="dl-logout-btn" onClick={() => window.location.reload()} title="Reload the page">↻ Refresh</button>
               <button className="dl-logout-btn" onClick={handleLogout}>Log out</button>
             </div>
           </div>
@@ -1294,6 +1339,41 @@ function DriverLog() {
                   )}
                 </>
               )}
+            </div>
+
+            <div className="dl-card">
+              <h2>Backfill Irham's trips</h2>
+              <div className="dl-hint" style={{ marginBottom: 12 }}>
+                This writes directly into Irham's own trip log — same one he sees on his Trips tab — for any past date. Use this for July and August, or any date he missed logging himself.
+              </div>
+              <div className="dl-field-row">
+                <div className="dl-field"><label>Date</label><input type="date" value={backfillTripDate} onChange={e => setBackfillTripDate(e.target.value)} /></div>
+              </div>
+              <form className="dl-form" onSubmit={handleBackfillTripSubmit}>
+                <div className="dl-field-row">
+                  <div className="dl-field"><label>Time in</label><input type="time" value={backfillTripForm.timeIn} onChange={e => setBackfillTripForm(f => ({ ...f, timeIn: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Time out</label><input type="time" value={backfillTripForm.timeOut} onChange={e => setBackfillTripForm(f => ({ ...f, timeOut: e.target.value }))} /></div>
+                </div>
+                <div className="dl-field"><label>Notes</label><input type="text" placeholder="Optional" value={backfillTripForm.notes} onChange={e => setBackfillTripForm(f => ({ ...f, notes: e.target.value }))} /></div>
+                <button type="submit" className="dl-btn-primary">Add to Irham's log</button>
+              </form>
+
+              <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px dashed #DBDED9' }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: '#5B6472', marginBottom: 6 }}>
+                  {new Date(backfillTripDate + 'T00:00:00').toLocaleDateString('en-MY', { month: 'long', year: 'numeric' })} — Irham's trips so far
+                </div>
+                {backfillTripMonthList.length === 0 ? <div className="dl-empty-note">No trips logged for this month yet.</div> : (
+                  [...backfillTripMonthList].sort((a, b) => a.date.localeCompare(b.date)).map(t => (
+                    <div className="dl-log-row" key={t.id}>
+                      <div className="dl-log-main">
+                        <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
+                        <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}{t.enteredBy ? ' · ' + t.enteredBy : ''}</div>
+                      </div>
+                      <button className="dl-log-del" onClick={() => handleDeleteBackfillTrip(t.id)} aria-label="Delete trip">&times;</button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </section>
         )}
