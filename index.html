@@ -1181,29 +1181,35 @@ function DriverLog() {
               {(() => {
                 const mk = monthKeyFromDateStr(attDate);
                 const monthData = attendanceCache[mk] || {};
-                const rows = Object.keys(monthData).sort().map(ds => ({ dateStr: ds, entry: monthData[ds], calc: computeDay(ds, monthData[ds], settings) }));
-                if (rows.length === 0) return <div className="dl-empty-note">No entries saved for this month yet.</div>;
+                const allRows = Object.keys(monthData).sort((a, b) => b.localeCompare(a)).map(ds => ({ dateStr: ds, entry: monthData[ds], calc: computeDay(ds, monthData[ds], settings) }));
+                if (allRows.length === 0) return <div className="dl-empty-note">No entries saved for this month yet.</div>;
+                const rows = allRows.slice(0, 3);
                 return (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="dl-breakdown-table">
-                      <thead><tr><th>Date</th><th>Status</th><th>In</th><th>Out</th><th className="num">Hrs</th><th></th></tr></thead>
-                      <tbody>
-                        {rows.map(r => {
-                          const isLeave = r.entry.status === 'leave' || r.entry.status === 'medical_leave';
-                          return (
-                            <tr key={r.dateStr}>
-                              <td>{r.dateStr}</td>
-                              <td>{statusLabel(r.entry.status || 'present')}</td>
-                              <td>{isLeave ? '—' : (r.entry.checkIn || '—')}</td>
-                              <td>{isLeave ? '—' : (r.entry.checkOut || '—')}</td>
-                              <td className="num">{(r.calc && !isLeave) ? fmtHrs(r.calc.worked) : '—'}</td>
-                              <td><button className="dl-log-del" onClick={() => setAttDate(r.dateStr)} aria-label="Edit this day">✎</button></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  <>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="dl-breakdown-table">
+                        <thead><tr><th>Date</th><th>Status</th><th>In</th><th>Out</th><th className="num">Hrs</th><th></th></tr></thead>
+                        <tbody>
+                          {rows.map(r => {
+                            const isLeave = r.entry.status === 'leave' || r.entry.status === 'medical_leave';
+                            return (
+                              <tr key={r.dateStr}>
+                                <td>{r.dateStr}</td>
+                                <td>{statusLabel(r.entry.status || 'present')}</td>
+                                <td>{isLeave ? '—' : (r.entry.checkIn || '—')}</td>
+                                <td>{isLeave ? '—' : (r.entry.checkOut || '—')}</td>
+                                <td className="num">{(r.calc && !isLeave) ? fmtHrs(r.calc.worked) : '—'}</td>
+                                <td><button className="dl-log-del" onClick={() => setAttDate(r.dateStr)} aria-label="Edit this day">✎</button></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {allRows.length > 3 && (
+                      <div className="dl-hint">Showing the 3 most recent of {allRows.length} entries this month.</div>
+                    )}
+                  </>
                 );
               })()}
             </div>
