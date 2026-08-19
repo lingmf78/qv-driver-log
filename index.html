@@ -1149,7 +1149,7 @@ function DriverLog() {
                 Use this to backfill or correct a check-in/check-out for any date — e.g. entering July's records by hand so OT reports are accurate.
               </div>
               <div className="dl-field-row">
-                <div className="dl-field"><label>Date</label><input type="date" value={attDate} onChange={e => setAttDate(e.target.value)} /></div>
+                <div className="dl-field"><label>Date{attDate ? ' — ' + new Date(attDate + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'long' }) : ''}</label><input type="date" value={attDate} onChange={e => setAttDate(e.target.value)} /></div>
                 <div className="dl-field">
                   <label>Status</label>
                   <select value={attForm.status} onChange={e => setAttForm(f => ({ ...f, status: e.target.value }))}>
@@ -1316,7 +1316,7 @@ function DriverLog() {
               </div>
               <form className="dl-form" onSubmit={handleAdminTripSubmit}>
                 <div className="dl-field-row">
-                  <div className="dl-field"><label>Date</label><input type="date" required value={adminTripForm.date} onChange={e => setAdminTripForm(f => ({ ...f, date: e.target.value }))} /></div>
+                  <div className="dl-field"><label>Date{adminTripForm.date ? ' — ' + new Date(adminTripForm.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'long' }) : ''}</label><input type="date" required value={adminTripForm.date} onChange={e => setAdminTripForm(f => ({ ...f, date: e.target.value }))} /></div>
                 </div>
                 <div className="dl-field-row">
                   <div className="dl-field"><label>Time in</label><input type="time" value={adminTripForm.timeIn} onChange={e => setAdminTripForm(f => ({ ...f, timeIn: e.target.value }))} /></div>
@@ -1353,7 +1353,7 @@ function DriverLog() {
                 This writes directly into Irham's own trip log — same one he sees on his Trips tab — for any past date. Use this for July and August, or any date he missed logging himself.
               </div>
               <div className="dl-field-row">
-                <div className="dl-field"><label>Date</label><input type="date" value={backfillTripDate} onChange={e => setBackfillTripDate(e.target.value)} /></div>
+                <div className="dl-field"><label>Date{backfillTripDate ? ' — ' + new Date(backfillTripDate + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'long' }) : ''}</label><input type="date" value={backfillTripDate} onChange={e => setBackfillTripDate(e.target.value)} /></div>
               </div>
               <form className="dl-form" onSubmit={handleBackfillTripSubmit}>
                 <div className="dl-field-row">
