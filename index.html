@@ -1413,7 +1413,7 @@ function DriverLog() {
                   <div className="dl-log-idx">{i + 1}</div>
                   <div className="dl-log-main">
                     <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
-                    <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}</div>
+                    <div className="t2">{t.date} ({new Date(t.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' })}){t.notes ? ' · ' + t.notes : ''}</div>
                   </div>
                   {t.date === dateStr && (
                     <button className="dl-log-del" onClick={() => handleDeleteTrip(t.id)} aria-label="Delete trip">&times;</button>
