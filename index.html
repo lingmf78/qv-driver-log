@@ -1348,7 +1348,7 @@ function DriverLog() {
                       <div className="dl-log-idx">{i + 1}</div>
                       <div className="dl-log-main">
                         <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
-                        <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}</div>
+                        <div className="t2">{t.date} ({new Date(t.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' })}){t.notes ? ' · ' + t.notes : ''}</div>
                       </div>
                       <button className="dl-log-del" onClick={() => handleDeleteAdminTrip(t.id)} aria-label="Delete record">&times;</button>
                     </div>
@@ -1389,7 +1389,7 @@ function DriverLog() {
                       <div className="dl-log-row" key={t.id}>
                         <div className="dl-log-main">
                           <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
-                          <div className="t2">{t.date}{t.notes ? ' · ' + t.notes : ''}{t.enteredBy ? ' · ' + t.enteredBy : ''}</div>
+                          <div className="t2">{t.date} ({new Date(t.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' })}){t.notes ? ' · ' + t.notes : ''}{t.enteredBy ? ' · ' + t.enteredBy : ''}</div>
                         </div>
                         <button className="dl-log-del" onClick={() => handleDeleteBackfillTrip(t.id)} aria-label="Delete trip">&times;</button>
                       </div>
