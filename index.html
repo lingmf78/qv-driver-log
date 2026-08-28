@@ -128,9 +128,10 @@ function elapsedHours(inT, outT) {
 // Hours worked are counted from whichever is later: the normal start time
 // (9:00am) or his actual check-in. Arriving early doesn't add extra hours;
 // arriving late (e.g. 9:30am) simply starts the count from 9:30am.
-function workedHoursFor(inT, outT, settings) {
+function workedHoursFor(inT, outT, settings, deductBreak) {
   const effectiveIn = timeToMinutes(inT) < timeToMinutes(settings.standardStart) ? settings.standardStart : inT;
   const el = elapsedHours(effectiveIn, outT);
+  if (!deductBreak) return el;
   return el > settings.breakHours ? el - settings.breakHours : el;
 }
 function paidHoursPerDay(settings) {
@@ -183,9 +184,11 @@ function computeDay(dateStr, entry, settings) {
   }
   if (!entry.checkIn || !entry.checkOut) return null;
 
-  // Total hours actually worked, counted from the real check-in time.
-  const worked = workedHoursFor(entry.checkIn, entry.checkOut, settings);
+  // Workdays deduct the unpaid lunch break as normal. Rest days and public
+  // holidays don't — since he's specially called in, the full elapsed time
+  // (including any break he takes) counts toward worked/OT hours instead.
   const dayType = getDayType(dateStr, settings);
+  const worked = workedHoursFor(entry.checkIn, entry.checkOut, settings, dayType === 'workday');
   const hr = hourlyRate(settings);
   const dr = dayRate(settings);
   // Irham's normal working hours are fixed at standardStart–standardEnd
@@ -524,6 +527,8 @@ function DriverLog() {
   const [backfillTripDate, setBackfillTripDate] = useState(toDateStr(today));
   const [backfillTripForm, setBackfillTripForm] = useState({ timeIn: '', timeOut: '', notes: '' });
   const [backfillTripMonthList, setBackfillTripMonthList] = useState([]);
+  const [showAllAdminTrips, setShowAllAdminTrips] = useState(false);
+  const [showAllBackfillTrips, setShowAllBackfillTrips] = useState(false);
 
   const [reportMonthDate, setReportMonthDate] = useState(todayInKL());
   const [reportAttendance, setReportAttendance] = useState({});
@@ -698,6 +703,7 @@ function DriverLog() {
   useEffect(() => {
     if (!isAdmin) return;
     loadBackfillTripMonth(backfillTripDate);
+    setShowAllBackfillTrips(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backfillTripDate, isAdmin]);
 
@@ -1337,7 +1343,7 @@ function DriverLog() {
               <h2>Records this month</h2>
               {adminTrips.length === 0 ? <div className="dl-empty-note">No records logged yet.</div> : (
                 <>
-                  {[...adminTrips].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 3).map((t, i) => (
+                  {[...adminTrips].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, showAllAdminTrips ? undefined : 3).map((t, i) => (
                     <div className="dl-log-row" key={t.id}>
                       <div className="dl-log-idx">{i + 1}</div>
                       <div className="dl-log-main">
@@ -1348,7 +1354,9 @@ function DriverLog() {
                     </div>
                   ))}
                   {adminTrips.length > 3 && (
-                    <div className="dl-hint">Showing the 3 most recent of {adminTrips.length} records this month.</div>
+                    <button className="dl-btn-primary" style={{ marginTop: 10 }} onClick={() => setShowAllAdminTrips(v => !v)}>
+                      {showAllAdminTrips ? 'Show less' : 'Show all ' + adminTrips.length + ' records'}
+                    </button>
                   )}
                 </>
               )}
@@ -1377,7 +1385,7 @@ function DriverLog() {
                 </div>
                 {backfillTripMonthList.length === 0 ? <div className="dl-empty-note">No trips logged for this month yet.</div> : (
                   <>
-                    {[...backfillTripMonthList].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, 3).map(t => (
+                    {[...backfillTripMonthList].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).slice(0, showAllBackfillTrips ? undefined : 3).map(t => (
                       <div className="dl-log-row" key={t.id}>
                         <div className="dl-log-main">
                           <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
@@ -1387,7 +1395,9 @@ function DriverLog() {
                       </div>
                     ))}
                     {backfillTripMonthList.length > 3 && (
-                      <div className="dl-hint">Showing the 3 most recent of {backfillTripMonthList.length} trips this month.</div>
+                      <button className="dl-btn-primary" style={{ marginTop: 10 }} onClick={() => setShowAllBackfillTrips(v => !v)}>
+                        {showAllBackfillTrips ? 'Show less' : 'Show all ' + backfillTripMonthList.length + ' trips'}
+                      </button>
                     )}
                   </>
                 )}
