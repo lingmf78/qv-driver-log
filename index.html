@@ -206,7 +206,11 @@ function computeDay(dateStr, entry, settings) {
   let otPay = 0, otHours = 0, note = '';
 
   if (dayType === 'workday') {
-    otHours = beyondH;
+    // 10-minute grace period: clocking out up to 18:10 doesn't count as OT
+    // at all (not even a few minutes of it) — only genuinely staying past
+    // that window triggers OT, counted from 18:00 as before.
+    const graceHours = 10 / 60;
+    otHours = beyondH <= graceHours ? 0 : beyondH;
     otPay = otHours * hr * 1.5;
     note = otHours > 0 ? fmtHrs(otHours) + 'h OT @1.5x (after ' + settings.standardEnd + ')' : 'No OT';
   } else if (dayType === 'rest_day') {
