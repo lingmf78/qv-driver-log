@@ -555,6 +555,24 @@ function DriverLog() {
   const dateStr = toDateStr(today);
   const monthKey = toMonthKey(today);
 
+  // ---------- driver "My Hours" tab ----------
+  // Irham sees the current month as it builds up. The previous month stays
+  // visible until the 8th (Malaysia time) of the new month, then disappears.
+  const mySheetMonths = (() => {
+    const kl = nowInKL();
+    const cur = new Date(kl.dateStr + 'T00:00:00');
+    const list = [toMonthKey(cur)];
+    if (cur.getDate() <= 8) {
+      const prev = new Date(cur.getFullYear(), cur.getMonth() - 1, 1);
+      list.unshift(toMonthKey(prev));
+    }
+    return list;
+  })();
+  const [mySheetMk, setMySheetMk] = useState(toMonthKey(today));
+  const [mySheetRows, setMySheetRows] = useState([]);
+  const [mySheetLoading, setMySheetLoading] = useState(false);
+  const mySheetMkSafe = mySheetMonths.includes(mySheetMk) ? mySheetMk : mySheetMonths[mySheetMonths.length - 1];
+
   const loadAttendanceMonth = useCallback(async (mk) => {
     if (attendanceCache[mk]) return attendanceCache[mk];
     const d = (await apiGet('attendance:' + mk, setSyncStatus)) || {};
@@ -922,6 +940,27 @@ function DriverLog() {
     setTimeout(() => setExportNote(''), 2000);
   }
 
+  // ---------- My Hours: load the selected month ----------
+  useEffect(() => {
+    if (activeTab !== 'myhours' || isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      setMySheetLoading(true);
+      const att = await loadAttendanceMonth(mySheetMkSafe);
+      const tr = await loadMonthArray('trips', mySheetMkSafe);
+      const rows = Object.keys(att).sort().map(ds => {
+        const entry = att[ds];
+        const calc = computeDay(ds, entry, settings);
+        const tripNotes = tr.filter(t => t.date === ds && t.notes).map(t => t.notes);
+        const notes = [entry.remark, ...tripNotes].filter(Boolean);
+        return { dateStr: ds, entry, calc, notes: [...new Set(notes)] };
+      });
+      if (!cancelled) { setMySheetRows(rows); setMySheetLoading(false); }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, mySheetMkSafe, isAdmin, settings]);
+
   // ---------- login / logout ----------
   function handleLoginDriver() {
     setCurrentRole('driver');
@@ -1079,9 +1118,9 @@ function DriverLog() {
           </div>
         </div>
         <nav className="dl-tabs">
-          {(isAdmin ? ['dashboard', 'attendance', 'trips', 'reports', 'settings'] : ['today', 'trips']).map(tab => (
+          {(isAdmin ? ['dashboard', 'attendance', 'trips', 'reports', 'settings'] : ['today', 'myhours', 'trips']).map(tab => (
             <button key={tab} className={activeTab === tab ? 'active' : ''} onClick={() => setActiveTab(tab)}>
-              {tab === 'today' ? 'Today' : tab === 'dashboard' ? 'Dashboard' : tab === 'attendance' ? 'Attendance' : tab === 'trips' ? 'Trips' : tab === 'reports' ? 'Reports' : 'Settings'}
+              {tab === 'today' ? 'Today' : tab === 'myhours' ? 'My Hours' : tab === 'dashboard' ? 'Dashboard' : tab === 'attendance' ? 'Attendance' : tab === 'trips' ? 'Trips' : tab === 'reports' ? 'Reports' : 'Settings'}
             </button>
           ))}
         </nav>
@@ -1406,6 +1445,65 @@ function DriverLog() {
                   </>
                 )}
               </div>
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'myhours' && !isAdmin && (
+          <section>
+            <div className="dl-card">
+              <h2>My time in &amp; out</h2>
+              <div className="dl-hint" style={{ marginBottom: 12 }}>
+                Your check-in and check-out times for the month. Last month stays here until the 8th of the new month, then it is removed.
+              </div>
+              <div className="dl-status-row" style={{ marginTop: 0 }}>
+                {mySheetMonths.map(mk => (
+                  <button key={mk} className={"dl-status-btn" + (mk === mySheetMkSafe ? ' active' : '')} onClick={() => setMySheetMk(mk)}>
+                    {new Date(mk + '-01T00:00:00').toLocaleDateString('en-MY', { month: 'long', year: 'numeric' })}
+                    {mk === toMonthKey(today) ? ' (this month)' : ''}
+                  </button>
+                ))}
+              </div>
+              {mySheetMonths.length > 1 && (
+                <div className="dl-hint">
+                  {new Date(mySheetMonths[0] + '-01T00:00:00').toLocaleDateString('en-MY', { month: 'long' })} is available until the 8th.
+                </div>
+              )}
+            </div>
+
+            <div className="dl-card">
+              <h2>{new Date(mySheetMkSafe + '-01T00:00:00').toLocaleDateString('en-MY', { month: 'long', year: 'numeric' })}</h2>
+              {mySheetLoading && <div className="dl-empty-note">Loading…</div>}
+              {!mySheetLoading && mySheetRows.length === 0 && <div className="dl-empty-note">No records for this month.</div>}
+              {!mySheetLoading && mySheetRows.length > 0 && (
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="dl-breakdown-table">
+                    <thead><tr><th>Date</th><th>In</th><th>Out</th><th className="num">Hrs</th><th>Notes</th></tr></thead>
+                    <tbody>
+                      {mySheetRows.map(r => {
+                        const isLeave = r.entry.status === 'leave' || r.entry.status === 'medical_leave';
+                        const dtype = getDayType(r.dateStr, settings);
+                        return (
+                          <tr key={r.dateStr}>
+                            <td>
+                              {prettyLabel(r.dateStr)}
+                              {dtype !== 'workday' && <div><span className={"dl-badge " + dtype} style={{ fontSize: 10 }}>{dayTypeLabel(dtype)}</span></div>}
+                            </td>
+                            <td>{isLeave ? '—' : (r.entry.checkIn || '—')}</td>
+                            <td>{isLeave ? '—' : (r.entry.checkOut || '—')}</td>
+                            <td className="num">{(r.calc && !isLeave) ? fmtHrs(r.calc.worked) : '—'}</td>
+                            <td style={{ fontSize: 12, color: '#5B6472' }}>
+                              {isLeave ? statusLabel(r.entry.status) : ''}
+                              {isLeave && r.notes.length ? ' · ' : ''}
+                              {r.notes.join(' · ')}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </section>
         )}
