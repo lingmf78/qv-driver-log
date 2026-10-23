@@ -206,13 +206,12 @@ function computeDay(dateStr, entry, settings) {
   let otPay = 0, otHours = 0, note = '';
 
   if (dayType === 'workday') {
-    // 10-minute grace period: clocking out up to 18:10 doesn't count as OT
-    // at all (not even a few minutes of it) — only genuinely staying past
-    // that window triggers OT, counted from 18:00 as before.
-    const graceHours = 10 / 60;
-    otHours = beyondH <= graceHours ? 0 : beyondH;
+    // Workday OT starts at 18:15 (standardEnd + 15 min): nothing before that
+    // counts, and OT hours are measured from 18:15 onwards.
+    const otStartOffsetH = 15 / 60;
+    otHours = Math.max(0, beyondH - otStartOffsetH);
     otPay = otHours * hr * 1.5;
-    note = otHours > 0 ? fmtHrs(otHours) + 'h OT @1.5x (after ' + settings.standardEnd + ')' : 'No OT';
+    note = otHours > 0 ? fmtHrs(otHours) + 'h OT @1.5x (from 18:15)' : 'No OT';
   } else if (dayType === 'rest_day') {
     let base = 0;
     if (worked <= 4) { base = 0.5 * dr; }
@@ -532,6 +531,12 @@ function DriverLog() {
   const [backfillTripForm, setBackfillTripForm] = useState({ timeIn: '', timeOut: '', notes: '' });
   const [backfillTripMonthList, setBackfillTripMonthList] = useState([]);
   const [showAllAdminTrips, setShowAllAdminTrips] = useState(false);
+
+  // Irham's OT log (auto-built from attendance) — note drafts and sync state
+  const [otNoteDrafts, setOtNoteDrafts] = useState({});
+  const [otSavedDate, setOtSavedDate] = useState('');
+  const [tripsLoaded, setTripsLoaded] = useState(false);
+  const otSyncBusy = useRef(false);
   const [showAllBackfillTrips, setShowAllBackfillTrips] = useState(false);
 
   const [reportMonthDate, setReportMonthDate] = useState(todayInKL());
@@ -608,6 +613,7 @@ function DriverLog() {
       await refreshRecentDays(merged);
       const tr = await loadMonthArray('trips', monthKey);
       setTrips(tr);
+      setTripsLoaded(true);
       const adt = await loadMonthArray('admin_trips', monthKey);
       setAdminTrips(adt);
     })();
@@ -686,10 +692,75 @@ function DriverLog() {
   async function handleDeleteTrip(id) {
     const arr = await loadMonthArray('trips', monthKey);
     const target = arr.find(t => t.id === id);
-    if (target && !isAdmin && target.date !== dateStr) return; // drivers can't remove past records
+    if (target && !isAdmin && target.date !== dateStr && !target.backfill) return; // drivers can only remove today's trips or ones they backfilled
     const nextArr = arr.filter(t => t.id !== id);
     await saveMonthArray('trips', monthKey, nextArr);
     setTrips(nextArr);
+  }
+
+  // ---------- driver OT log: auto-built from attendance ----------
+  // A day qualifies when: workday + checked out after 18:15, or any rest day /
+  // public holiday with check-in & check-out.
+  const otDays = (() => {
+    if (isAdmin) return [];
+    const att = attendanceCache[monthKey] || {};
+    return Object.keys(att).sort().filter(ds => ds <= dateStr).map(ds => {
+      const entry = att[ds];
+      if (!entry || entry.status === 'leave' || entry.status === 'medical_leave') return null;
+      if (!entry.checkIn || !entry.checkOut) return null;
+      const calc = computeDay(ds, entry, settings);
+      if (!calc) return null;
+      // Workdays: pulled only when checked out after 18:15 (standardEnd + 15 min).
+      // Not shown to the driver. Overnight check-outs (out < in) also count.
+      const outM = timeToMinutes(entry.checkOut);
+      const lateOut = outM < timeToMinutes(entry.checkIn) || outM > timeToMinutes(settings.standardEnd) + 15;
+      const qualifies = calc.dayType === 'workday' ? lateOut : true;
+      return qualifies ? { ds, dayType: calc.dayType, checkIn: entry.checkIn, checkOut: entry.checkOut } : null;
+    }).filter(Boolean);
+  })();
+  const otDaySet = new Set(otDays.map(d => d.ds));
+
+  // Keep the stored trip records in step with the OT days (so Reports match)
+  useEffect(() => {
+    if (isAdmin || !tripsLoaded || otSyncBusy.current) return;
+    const stale = trips.filter(t => t.auto && !otDaySet.has(t.date) && !t.notes);
+    const needs = otDays.filter(d => {
+      const r = trips.find(t => t.auto && t.date === d.ds);
+      return !r || r.timeIn !== d.checkIn || r.timeOut !== d.checkOut;
+    });
+    if (!stale.length && !needs.length) return;
+    otSyncBusy.current = true;
+    (async () => {
+      try {
+        const arr = await loadMonthArray('trips', monthKey);
+        let next = arr.filter(t => !(t.auto && !otDaySet.has(t.date) && !t.notes));
+        for (const d of otDays) {
+          const idx = next.findIndex(t => t.auto && t.date === d.ds);
+          if (idx >= 0) next[idx] = { ...next[idx], timeIn: d.checkIn, timeOut: d.checkOut };
+          else next.push({ id: genId(), date: d.ds, timeIn: d.checkIn, timeOut: d.checkOut, notes: '', enteredBy: 'Auto (OT)', auto: true });
+        }
+        await saveMonthArray('trips', monthKey, next);
+        setTrips(next);
+      } finally { otSyncBusy.current = false; }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attendanceCache, trips, tripsLoaded, isAdmin, settings]);
+
+  async function handleOtNoteSave(ds, note) {
+    if (isAdmin || !otDaySet.has(ds)) return;
+    const arr = await loadMonthArray('trips', monthKey);
+    const d = otDays.find(x => x.ds === ds);
+    const idx = arr.findIndex(t => t.auto && t.date === ds);
+    const next = [...arr];
+    if (idx >= 0) {
+      if ((next[idx].notes || '') === note) return;
+      next[idx] = { ...next[idx], notes: note, enteredBy: CURRENT_USER };
+    } else {
+      next.push({ id: genId(), date: ds, timeIn: d.checkIn, timeOut: d.checkOut, notes: note, enteredBy: CURRENT_USER, auto: true });
+    }
+    await saveMonthArray('trips', monthKey, next);
+    setTrips(next);
+    setOtSavedDate(ds);
   }
 
   // ---------- admin's own trip records (separate from Irham's log) ----------
@@ -1511,35 +1582,50 @@ function DriverLog() {
         {activeTab === 'trips' && !isAdmin && (
           <section>
             <div className="dl-card">
-              <h2>Log a trip (OT only)</h2>
+              <h2>OT log &mdash; {new Date(monthKey + '-01T00:00:00').toLocaleDateString('en-MY', { month: 'long', year: 'numeric' })}</h2>
               <div className="dl-hint" style={{ marginBottom: 12 }}>
-                Time in and time out are taken automatically from today's check-in/check-out on the Today tab — just add a note if there's anything worth flagging for OT.
+                Your OT days for this month appear here automatically. Please indicate the reason for each day.
               </div>
-              <form className="dl-form" onSubmit={handleTripSubmit}>
-                <div className="dl-field-row">
-                  <div className="dl-field"><label>Time in</label><input type="text" disabled value={todayEntry.checkIn || 'Not checked in yet'} /></div>
-                  <div className="dl-field"><label>Time out</label><input type="text" disabled value={todayEntry.checkOut || 'Not checked out yet'} /></div>
-                </div>
-                <div className="dl-field"><label>Notes</label><input type="text" placeholder="Optional — e.g. reason for OT" value={tripForm.notes} onChange={e => setTripForm(f => ({ ...f, notes: e.target.value }))} /></div>
-                <button type="submit" className="dl-btn-primary">Add trip</button>
-              </form>
-            </div>
-            <div className="dl-card">
-              <h2>Trips this month</h2>
-              {trips.length === 0 && <div className="dl-empty-note">No trips logged this month.</div>}
-              {[...trips].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).map((t, i) => (
-                <div className="dl-log-row" key={t.id}>
-                  <div className="dl-log-idx">{i + 1}</div>
-                  <div className="dl-log-main">
-                    <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
-                    <div className="t2">{t.date} ({new Date(t.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' })}){t.notes ? ' · ' + t.notes : ''}</div>
+              {otDays.length === 0 && <div className="dl-empty-note">No OT days this month yet.</div>}
+              {[...otDays].reverse().map((d, i) => {
+                const rec = trips.find(t => t.auto && t.date === d.ds);
+                const saved = rec ? (rec.notes || '') : '';
+                const val = otNoteDrafts[d.ds] !== undefined ? otNoteDrafts[d.ds] : saved;
+                return (
+                  <div className="dl-log-row" key={d.ds} style={{ alignItems: 'flex-start' }}>
+                    <div className="dl-log-idx">{i + 1}</div>
+                    <div className="dl-log-main" style={{ flex: 1 }}>
+                      <div className="t1">
+                        {new Date(d.ds + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'long', day: 'numeric', month: 'short' })}
+                        {d.dayType !== 'workday' && <span className={"dl-badge " + d.dayType} style={{ fontSize: 10, marginLeft: 6 }}>{dayTypeLabel(d.dayType)}</span>}
+                      </div>
+                      <div className="t2">In {d.checkIn} &rarr; Out {d.checkOut}</div>
+                      <input type="text" style={{ width: '100%', marginTop: 6 }} placeholder="Indicate reason" value={val}
+                        onChange={e => setOtNoteDrafts(m => ({ ...m, [d.ds]: e.target.value }))}
+                        onBlur={() => {
+                          if (otNoteDrafts[d.ds] === undefined) return;
+                          handleOtNoteSave(d.ds, otNoteDrafts[d.ds].trim()).then(() => setOtNoteDrafts(m => { const n = { ...m }; delete n[d.ds]; return n; }));
+                        }} />
+                      {otSavedDate === d.ds && <div className="dl-save-note">Saved</div>}
+                    </div>
                   </div>
-                  {t.date === dateStr && (
-                    <button className="dl-log-del" onClick={() => handleDeleteTrip(t.id)} aria-label="Delete trip">&times;</button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
+            {trips.filter(t => !t.auto).length > 0 && (
+              <div className="dl-card">
+                <h2>Earlier manual trips</h2>
+                {[...trips.filter(t => !t.auto)].sort((a, b) => b.date.localeCompare(a.date)).map((t, i) => (
+                  <div className="dl-log-row" key={t.id}>
+                    <div className="dl-log-idx">{i + 1}</div>
+                    <div className="dl-log-main">
+                      <div className="t1">{t.timeIn || '—'} → {t.timeOut || '—'}</div>
+                      <div className="t2">{t.date} ({new Date(t.date + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short' })}){t.notes ? ' · ' + t.notes : ''}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
